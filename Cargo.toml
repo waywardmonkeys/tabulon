@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["tabulon"]
+members = [ "examples/vello_viewer","tabulon"]
 
 [workspace.package]
 # Tabulon version, also used by other packages which want to mimic Tabulon's version.
