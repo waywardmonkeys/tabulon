@@ -34,6 +34,15 @@ fn ensure_libm_dependency_used() -> f32 {
     libm::sqrtf(4_f32)
 }
 
+/// Collection of graphics items.
+pub mod graphics_bag;
+
+/// Render layer which lists graphics items in a [`GraphicsBag`](graphics_bag::GraphicsBag) for rendering.
+pub mod render_layer;
+
+/// Shapes for rendering and event dispatch.
+pub mod shape;
+
 #[cfg(test)]
 mod tests {
     // CI will fail unless cargo nextest can execute at least one test per workspace.
