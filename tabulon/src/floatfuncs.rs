@@ -7,7 +7,7 @@
 macro_rules! define_float_funcs {
     ($(
         fn $name:ident(self $(,$arg:ident: $arg_ty:ty)*) -> $ret:ty
-        => $lname:ident/$lfname:ident;
+            => $lname:ident/$lfname:ident;
     )+) => {
 
         /// Since core doesn't depend upon libm, this provides libm implementations
@@ -15,8 +15,8 @@ macro_rules! define_float_funcs {
         /// the `std` feature is not enabled.
         ///
         /// For documentation see the respective functions in the std library.
-        #[expect(dead_code, reason = "This is here for future use, isn't used yet.")]
         #[cfg(not(feature = "std"))]
+        #[expect(dead_code, reason = "Tasteful YAGNI.")]
         pub(crate) trait FloatFuncs : Sized {
             $(fn $name(self $(,$arg: $arg_ty)*) -> $ret;)+
         }
