@@ -1,0 +1,25 @@
+[package]
+name = "vello_viewer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vello = "0.4.0"
+anyhow = "1.0.93"
+pollster = "0.4.0"
+winit = "0.30.8"
+dxf = "0.6.0"
+tabulon = { version = "0.1.0", path = "../../tabulon" }
+uuid = "1.3.3"
+getrandom = "0.3.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { version = "1.3.3", features = ["rng-rand", "serde", "v4"]}
+getrandom = { version = "0.3.1", features = ["wasm_js"] }
+
+[lints]
+workspace = true
