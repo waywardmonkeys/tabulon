@@ -32,6 +32,9 @@ fn ensure_libm_dependency_used() -> f32 {
     libm::sqrtf(4_f32)
 }
 
+/// Display lists and related
+pub mod displaylist;
+
 #[cfg(test)]
 mod tests {
     // CI will fail unless cargo nextest can execute at least one test per workspace.
