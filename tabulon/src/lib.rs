@@ -32,8 +32,9 @@ fn ensure_libm_dependency_used() -> f32 {
     libm::sqrtf(4_f32)
 }
 
-/// Display lists and related
-pub mod displaylist;
+pub mod graphics_bag;
+pub mod render_layer;
+pub mod shape;
 
 #[cfg(test)]
 mod tests {

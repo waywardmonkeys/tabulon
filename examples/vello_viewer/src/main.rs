@@ -208,53 +208,70 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
 /// Add shapes to a vello scene. This does not actually render the shapes, but adds them
 /// to the Scene data structure which represents a set of objects to draw.
 fn add_shapes_to_scene(scene: &mut Scene) {
-    use tabulon::displaylist::{AnyShape, DisplayItem, DisplayList, FatPaint, FatShape, SmallVec};
+    use tabulon::shape::{AnyShape, FatPaint, FatShape, SmallVec};
+    use tabulon::{
+        graphics_bag::{GraphicsBag, GraphicsItem},
+        render_layer::RenderLayer,
+    };
 
-    let mut dl = DisplayList::default();
+    let mut rl = RenderLayer::default();
+    let mut gb = GraphicsBag::default();
 
     // Draw an outlined rectangle
-    dl.push(FatShape {
-        transform: Affine::IDENTITY,
-        paint: FatPaint {
-            stroke: Stroke::new(6.0),
-            stroke_paint: Some(Color::new([0.9804, 0.702, 0.5294, 1.]).into()),
-            fill_paint: None,
+    rl.push_with_bag(
+        &mut gb,
+        FatShape {
+            transform: Affine::IDENTITY,
+            paint: FatPaint {
+                stroke: Stroke::new(6.0),
+                stroke_paint: Some(Color::new([0.9804, 0.702, 0.5294, 1.]).into()),
+                fill_paint: None,
+            },
+            subshapes: SmallVec::from([RoundedRect::new(10.0, 10.0, 240.0, 240.0, 20.0).into()]),
         },
-        subshapes: SmallVec::from([RoundedRect::new(10.0, 10.0, 240.0, 240.0, 20.0).into()]),
-    });
+    );
 
     // Draw a filled circle
-    dl.push(FatShape {
-        transform: Affine::IDENTITY,
-        paint: FatPaint {
-            stroke: Default::default(),
-            stroke_paint: None,
-            fill_paint: Some(Color::new([0.9529, 0.5451, 0.6588, 1.]).into()),
+    rl.push_with_bag(
+        &mut gb,
+        FatShape {
+            transform: Affine::IDENTITY,
+            paint: FatPaint {
+                stroke: Default::default(),
+                stroke_paint: None,
+                fill_paint: Some(Color::new([0.9529, 0.5451, 0.6588, 1.]).into()),
+            },
+            subshapes: SmallVec::from([Circle::new((420.0, 200.0), 120.0).into()]),
         },
-        subshapes: SmallVec::from([Circle::new((420.0, 200.0), 120.0).into()]),
-    });
+    );
 
     // Draw a filled ellipse
-    dl.push(FatShape {
-        transform: Affine::IDENTITY,
-        paint: FatPaint {
-            stroke: Default::default(),
-            stroke_paint: None,
-            fill_paint: Some(Color::new([0.7961, 0.651, 0.9686, 1.]).into()),
+    rl.push_with_bag(
+        &mut gb,
+        FatShape {
+            transform: Affine::IDENTITY,
+            paint: FatPaint {
+                stroke: Default::default(),
+                stroke_paint: None,
+                fill_paint: Some(Color::new([0.7961, 0.651, 0.9686, 1.]).into()),
+            },
+            subshapes: SmallVec::from([Ellipse::new((250.0, 420.0), (100.0, 160.0), -90.0).into()]),
         },
-        subshapes: SmallVec::from([Ellipse::new((250.0, 420.0), (100.0, 160.0), -90.0).into()]),
-    });
+    );
 
     // Draw a straight line
-    dl.push(FatShape {
-        transform: Affine::IDENTITY,
-        paint: FatPaint {
-            stroke: Stroke::new(6.0),
-            stroke_paint: Some(Color::new([0.5373, 0.7059, 0.9804, 1.]).into()),
-            fill_paint: None,
+    rl.push_with_bag(
+        &mut gb,
+        FatShape {
+            transform: Affine::IDENTITY,
+            paint: FatPaint {
+                stroke: Stroke::new(6.0),
+                stroke_paint: Some(Color::new([0.5373, 0.7059, 0.9804, 1.]).into()),
+                fill_paint: None,
+            },
+            subshapes: SmallVec::from([Line::new((260.0, 20.0), (620.0, 100.0)).into()]),
         },
-        subshapes: SmallVec::from([Line::new((260.0, 20.0), (620.0, 100.0)).into()]),
-    });
+    );
 
     // AnyShape is an enum and there's no elegant way to reverse this to an impl Shape.
     macro_rules! render_anyshape_match {
@@ -268,12 +285,12 @@ fn add_shapes_to_scene(scene: &mut Scene) {
             match $subshape {
                 $(AnyShape::$name(x) =>  {
                     if let Some(ref stroke_paint) = stroke_paint {
-                        scene.stroke(&stroke, $transform, stroke_paint, None, &x);
+                        scene.stroke(&stroke, *$transform, stroke_paint, None, &x);
                     }
                     if let Some(ref fill_paint) = fill_paint {
                         scene.fill(
                             vello::peniko::Fill::NonZero,
-                            $transform,
+                            *$transform,
                             fill_paint,
                             None,
                             &x,
@@ -284,30 +301,32 @@ fn add_shapes_to_scene(scene: &mut Scene) {
         }
     }
 
-    for it in dl.items {
-        match it {
-            DisplayItem::FatShape(FatShape {
-                paint,
-                transform,
-                subshapes,
-            }) => {
-                for subshape in subshapes {
-                    render_anyshape_match!(
-                        paint,
-                        transform,
-                        subshape,
-                        Arc,
-                        BezPath,
-                        Circle,
-                        CircleSegment,
-                        CubicBez,
-                        Ellipse,
-                        Line,
-                        PathSeg,
-                        QuadBez,
-                        Rect,
-                        RoundedRect
-                    );
+    for idx in rl.indices {
+        if let Some(ref gi) = gb.get(idx) {
+            match gi {
+                GraphicsItem::FatShape(FatShape {
+                    paint,
+                    transform,
+                    subshapes,
+                }) => {
+                    for subshape in subshapes {
+                        render_anyshape_match!(
+                            paint,
+                            transform,
+                            subshape,
+                            Arc,
+                            BezPath,
+                            Circle,
+                            CircleSegment,
+                            CubicBez,
+                            Ellipse,
+                            Line,
+                            PathSeg,
+                            QuadBez,
+                            Rect,
+                            RoundedRect
+                        );
+                    }
                 }
             }
         }

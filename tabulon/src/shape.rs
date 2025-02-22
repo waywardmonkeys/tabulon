@@ -1,6 +1,3 @@
-extern crate alloc;
-use alloc::vec::Vec;
-
 use peniko::{
     kurbo::{
         Affine, Arc, BezPath, Circle, CircleSegment, CubicBez, Ellipse, Line, PathSeg, QuadBez,
@@ -79,33 +76,4 @@ pub struct FatShape {
     pub paint: FatPaint,
     /// [`AnyShape`]s
     pub subshapes: SmallVec<[AnyShape; 1]>,
-}
-
-/// Items for [`DisplayList`]
-#[derive(Debug)]
-pub enum DisplayItem {
-    /// `DisplayItem` is a [`FatShape`]
-    FatShape(FatShape),
-}
-
-impl From<FatShape> for DisplayItem {
-    fn from(s: FatShape) -> Self {
-        Self::FatShape(s)
-    }
-}
-
-/// Simple display list
-#[derive(Debug, Default)]
-pub struct DisplayList {
-    /// Items in DisplayList
-    pub items: Vec<DisplayItem>,
-}
-
-impl DisplayList {
-    /// Push a [`DisplayItem`], returning its index.
-    pub fn push(&mut self, i: impl Into<DisplayItem>) -> usize {
-        let n = self.items.len();
-        self.items.push(i.into());
-        n
-    }
 }
