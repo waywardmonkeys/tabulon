@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use vello::kurbo::{Affine, Circle, Ellipse, Line, Point, RoundedRect, Stroke};
+use vello::kurbo::{Affine, Circle, Ellipse, Line, RoundedRect, Stroke};
 use vello::peniko::color::palette;
 use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
@@ -78,13 +78,6 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
         // Save the Window and Surface to a state variable
         self.state = RenderState::Active(ActiveRenderState { window, surface });
-
-        // Empty the scene of objects to draw. You could create a new Scene each time, but in this case
-        // the same Scene is reused so that the underlying memory allocation can also be reused.
-        self.scene.reset();
-
-        // Re-add the objects to draw to the scene.
-        add_shapes_to_scene(&mut self.scene);
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -121,6 +114,13 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
             // This is where all the rendering happens
             WindowEvent::RedrawRequested => {
+                // Empty the scene of objects to draw. You could create a new Scene each time, but in this case
+                // the same Scene is reused so that the underlying memory allocation can also be reused.
+                self.scene.reset();
+
+                // Re-add the objects to draw to the scene.
+                add_shapes_to_scene(&mut self.scene);
+
                 // Get the RenderSurface (surface + config)
                 let surface = &render_state.surface;
 
@@ -217,70 +217,61 @@ fn add_shapes_to_scene(scene: &mut Scene) {
     let mut rl = RenderLayer::default();
     let mut gb = GraphicsBag::default();
 
-    {
-        // this is purely for demonstration purposes
-        use dxf::{
-            entities::{EntityType, Line as DxfLine},
-            Drawing,
-        };
-
-        let drawing = Drawing::load_file(
-            std::env::args()
-                .last()
-                .expect("Please provide a path in the last argument."),
-        )
-        .unwrap();
-
-        let mut lines = SmallVec::<[AnyShape; 1]>::new();
-
-        for e in drawing.entities() {
-            match e.specific {
-                EntityType::Line(ref line) => {
-                    let p0 = {
-                        let dxf::Point { x, y, .. } = line.p1;
-                        Point { x, y }
-                    };
-                    let p1 = {
-                        let dxf::Point { x, y, .. } = line.p2;
-                        Point { x, y }
-                    };
-                    let l = Line { p0, p1 };
-                    lines.push(l.into());
-                }
-                EntityType::Circle(ref circle) => {
-                    let center = {
-                        let dxf::Point { x, y, .. } = circle.center;
-                        Point { x, y }
-                    };
-                    let c = Circle {
-                        center,
-                        radius: circle.radius,
-                    };
-                    lines.push(c.into());
-                }
-                _ => {
-                    eprintln!("unhandled entity {:?}", e.specific);
-                }
-            }
-        }
-
-        // Draw some lines
-        rl.push_with_bag(
-            &mut gb,
-            FatShape {
-                transform: Affine::scale(2.5).then_translate(vello::kurbo::Vec2 {
-                    x: 1920.0,
-                    y: 480.0,
-                }),
-                paint: FatPaint {
-                    stroke: Stroke::new(1.414 / 2.5 / 2.0),
-                    stroke_paint: Some(Color::WHITE.into()),
-                    fill_paint: None,
-                },
-                subshapes: lines,
+    // Draw an outlined rectangle
+    rl.push_with_bag(
+        &mut gb,
+        FatShape {
+            transform: Affine::IDENTITY,
+            paint: FatPaint {
+                stroke: Stroke::new(6.0),
+                stroke_paint: Some(Color::new([0.9804, 0.702, 0.5294, 1.]).into()),
+                fill_paint: None,
             },
-        );
-    }
+            subshapes: SmallVec::from([RoundedRect::new(10.0, 10.0, 240.0, 240.0, 20.0).into()]),
+        },
+    );
+
+    // Draw a filled circle
+    rl.push_with_bag(
+        &mut gb,
+        FatShape {
+            transform: Affine::IDENTITY,
+            paint: FatPaint {
+                stroke: Default::default(),
+                stroke_paint: None,
+                fill_paint: Some(Color::new([0.9529, 0.5451, 0.6588, 1.]).into()),
+            },
+            subshapes: SmallVec::from([Circle::new((420.0, 200.0), 120.0).into()]),
+        },
+    );
+
+    // Draw a filled ellipse
+    rl.push_with_bag(
+        &mut gb,
+        FatShape {
+            transform: Affine::IDENTITY,
+            paint: FatPaint {
+                stroke: Default::default(),
+                stroke_paint: None,
+                fill_paint: Some(Color::new([0.7961, 0.651, 0.9686, 1.]).into()),
+            },
+            subshapes: SmallVec::from([Ellipse::new((250.0, 420.0), (100.0, 160.0), -90.0).into()]),
+        },
+    );
+
+    // Draw a straight line
+    rl.push_with_bag(
+        &mut gb,
+        FatShape {
+            transform: Affine::IDENTITY,
+            paint: FatPaint {
+                stroke: Stroke::new(6.0),
+                stroke_paint: Some(Color::new([0.5373, 0.7059, 0.9804, 1.]).into()),
+                fill_paint: None,
+            },
+            subshapes: SmallVec::from([Line::new((260.0, 20.0), (620.0, 100.0)).into()]),
+        },
+    );
 
     // AnyShape is an enum and there's no elegant way to reverse this to an impl Shape.
     macro_rules! render_anyshape_match {

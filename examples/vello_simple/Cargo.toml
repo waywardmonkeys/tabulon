@@ -1,5 +1,5 @@
 [package]
-name = "vello_viewer"
+name = "vello_simple"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,6 @@ vello = "0.4.0"
 anyhow = "1.0.93"
 pollster = "0.4.0"
 winit = "0.30.8"
-dxf = "0.6.0"
 tabulon = { version = "0.1.0", path = "../../tabulon" }
 
 [lints]
