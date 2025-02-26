@@ -1,5 +1,8 @@
 use crate::graphics_bag::{GraphicsBag, GraphicsItem};
 use crate::shape::FatShape;
+extern crate alloc;
+
+use alloc::vec::Vec;
 
 impl From<FatShape> for GraphicsItem {
     fn from(s: FatShape) -> Self {

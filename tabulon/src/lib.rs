@@ -1,6 +1,6 @@
 // Copyright 2025 the Tabulon Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-
+#![no_std]
 //! Tabulon is a Rust crate which ...
 //!
 //! ## Features
