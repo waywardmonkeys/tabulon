@@ -375,6 +375,9 @@ name = "color"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c387f6cef110ee8eaf12fca5586d3d303c07c594f4a5f02c768b6470b70dbd"
+dependencies = [
+ "libm",
+]
 
 [[package]]
 name = "color_quant"
@@ -1027,6 +1030,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89234b2cc610a7dd927ebde6b41dd1a5d4214cffaef4cf1fb2195d592f92518f"
 dependencies = [
  "arrayvec",
+ "libm",
  "smallvec",
 ]
 
