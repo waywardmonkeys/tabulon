@@ -6,7 +6,10 @@
 use anyhow::Result;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use vello::kurbo::{Affine, Circle, Ellipse, Line, Point, RoundedRect, Stroke};
+use vello::kurbo::{
+    Affine, Arc as KurboArc, BezPath, Circle, Ellipse, Line, PathEl, Point, RoundedRect, Stroke,
+    Vec2,
+};
 use vello::peniko::color::palette;
 use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
@@ -47,6 +50,13 @@ struct SimpleVelloApp<'s> {
     // description a scene to be drawn (with paths, fills, images, text, etc)
     // which is then passed to a renderer for rendering
     scene: Scene,
+
+    // Some lines idk
+    lines: SmallVec<[AnyShape; 1]>,
+
+    // View transform
+    view_transform: Affine,
+}
 }
 
 impl ApplicationHandler for SimpleVelloApp<'_> {
@@ -83,8 +93,120 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         // the same Scene is reused so that the underlying memory allocation can also be reused.
         self.scene.reset();
 
+        // Load the lines
+        self.lines = {
+            // this is purely for demonstration purposes
+            use dxf::{
+                entities::{EntityType, Line as DxfLine},
+                Drawing,
+            };
+
+            let drawing = Drawing::load_file(
+                std::env::args()
+                    .last()
+                    .expect("Please provide a path in the last argument."),
+            )
+            .unwrap();
+
+            let mut lines = SmallVec::<[AnyShape; 1]>::new();
+
+            for e in drawing.entities() {
+                match e.specific {
+                    EntityType::Arc(ref a) => {
+                        let dxf::entities::Arc {
+                            center,
+                            radius,
+                            start_angle,
+                            end_angle,
+                            ..
+                        } = a.clone();
+                        lines.push(
+                            KurboArc {
+                                center: Point {
+                                    x: center.x,
+                                    y: center.y,
+                                },
+                                radii: Vec2::new(radius, radius),
+                                start_angle,
+                                // FIXME: don't know if this is correct.
+                                sweep_angle: end_angle,
+                                x_rotation: 0.0,
+                            }
+                            .into(),
+                        );
+                    }
+                    EntityType::Line(ref line) => {
+                        let p0 = {
+                            let dxf::Point { x, y, .. } = line.p1;
+                            Point { x, y }
+                        };
+                        let p1 = {
+                            let dxf::Point { x, y, .. } = line.p2;
+                            Point { x, y }
+                        };
+                        let l = Line { p0, p1 };
+                        lines.push(l.into());
+                    }
+                    EntityType::Circle(ref circle) => {
+                        let center = {
+                            let dxf::Point { x, y, .. } = circle.center;
+                            Point { x, y }
+                        };
+                        let c = Circle {
+                            center,
+                            radius: circle.radius,
+                        };
+                        lines.push(c.into());
+                    }
+                    EntityType::LwPolyline(ref lwp) => {
+                        // FIXME: LwPolyline supports variable width and arcs.
+                        if lwp.vertices.len() >= 2 {
+                            let mut bp = BezPath::new();
+                            fn lwp_vertex_to_point(
+                                dxf::LwPolylineVertex { x, y, .. }: dxf::LwPolylineVertex,
+                            ) -> Point {
+                                Point { x, y }
+                            }
+                            bp.push(PathEl::MoveTo(lwp_vertex_to_point(lwp.vertices[0])));
+                            for i in 1..(lwp.vertices.len() - 1) {
+                                bp.push(PathEl::LineTo(lwp_vertex_to_point(lwp.vertices[i])));
+                            }
+                            lines.push(bp.into());
+                        }
+                    }
+                    // misnomer, this is actually a general purpose bezier path
+                    // EntityType::Polyline(ref poly) => {}
+                    _ => {
+                        eprintln!("unhandled entity {:?}", e.specific);
+                    }
+                }
+            }
+
+            lines
+        };
+
+        let bounds = self
+            .lines
+            .iter()
+            .map(AnyShape::bounding_box)
+            .fold(vello::kurbo::Rect::default(), |a, x| a.union(x));
+
+        self.view_scale = (size.height as f64 / bounds.size().height)
+            .min(size.width as f64 / bounds.size().width);
+
+        self.view_transform = Affine::translate(Vec2 {
+            x: -bounds.min_x(),
+            y: -bounds.min_y(),
+        })
+        .then_scale(self.view_scale);
+
         // Re-add the objects to draw to the scene.
-        add_shapes_to_scene(&mut self.scene);
+        add_shapes_to_scene(
+            &mut self.scene,
+            self.view_transform,
+            &self.lines,
+            1. / self.view_scale,
+        );
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -117,6 +239,56 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
             WindowEvent::Resized(size) => {
                 self.context
                     .resize_surface(&mut render_state.surface, size.width, size.height);
+
+                let bounds = self
+                    .lines
+                    .iter()
+                    .map(AnyShape::bounding_box)
+                    .fold(vello::kurbo::Rect::default(), |a, x| a.union(x));
+
+                self.view_scale = (size.height as f64 / bounds.size().height)
+                    .min(size.width as f64 / bounds.size().width);
+
+                self.view_transform = Affine::translate(Vec2 {
+                    x: -bounds.min_x(),
+                    y: -bounds.min_y(),
+                })
+                .then_scale(self.view_scale);
+
+                self.scene.reset();
+                add_shapes_to_scene(
+                    &mut self.scene,
+                    self.view_transform,
+                    &self.lines,
+                    1. / self.view_scale,
+                );
+            }
+
+            // cursor moved
+            WindowEvent::CursorMoved { position, .. } => {
+                let p = {
+                    let winit::dpi::PhysicalPosition::<f64> { x, y } = position;
+                    Point { x, y }
+                };
+
+                let mut gb = GraphicsBag::default();
+                gb.push(FatShape {
+                    transform: self.view_transform,
+                    paint: FatPaint {
+                        stroke: Stroke::new(1.0 / self.view_scale),
+                        stroke_paint: Some(Color::WHITE.into()),
+                        fill_paint: None,
+                    },
+                    subshapes: self.lines.clone(),
+                });
+
+                if let Some(item) = gb.get(0) {
+                    if let GraphicsItem::FatShape(s) = item {
+                        if let Some(p) = s.pick(p, 10000.).get(0) {
+                            println!("closest item: {:?}", s.subshapes[*p]);
+                        }
+                    }
+                }
             }
 
             // This is where all the rendering happens
@@ -172,6 +344,9 @@ fn main() -> Result<()> {
         renderers: vec![],
         state: RenderState::Suspended(None),
         scene: Scene::new(),
+        lines: Default::default(),
+        view_transform: Default::default(),
+        view_scale: 1.0,
     };
 
     // Create and run a winit event loop
@@ -205,86 +380,40 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
     .expect("Couldn't create renderer")
 }
 
+use tabulon::{
+    graphics_bag::{GraphicsBag, GraphicsItem},
+    render_layer::RenderLayer,
+    shape::{AnyShape, FatPaint, FatShape, SmallVec},
+};
+
 /// Add shapes to a vello scene. This does not actually render the shapes, but adds them
 /// to the Scene data structure which represents a set of objects to draw.
-fn add_shapes_to_scene(scene: &mut Scene) {
-    use tabulon::shape::{AnyShape, FatPaint, FatShape, SmallVec};
-    use tabulon::{
-        graphics_bag::{GraphicsBag, GraphicsItem},
-        render_layer::RenderLayer,
-    };
-
+fn add_shapes_to_scene(
+    scene: &mut Scene,
+    transform: Affine,
+    lines: &SmallVec<[AnyShape; 1]>,
+    default_line_weight: f64,
+) {
     let mut rl = RenderLayer::default();
     let mut gb = GraphicsBag::default();
 
-    {
-        // this is purely for demonstration purposes
-        use dxf::{
-            entities::{EntityType, Line as DxfLine},
-            Drawing,
-        };
-
-        let drawing = Drawing::load_file(
-            std::env::args()
-                .last()
-                .expect("Please provide a path in the last argument."),
-        )
-        .unwrap();
-
-        let mut lines = SmallVec::<[AnyShape; 1]>::new();
-
-        for e in drawing.entities() {
-            match e.specific {
-                EntityType::Line(ref line) => {
-                    let p0 = {
-                        let dxf::Point { x, y, .. } = line.p1;
-                        Point { x, y }
-                    };
-                    let p1 = {
-                        let dxf::Point { x, y, .. } = line.p2;
-                        Point { x, y }
-                    };
-                    let l = Line { p0, p1 };
-                    lines.push(l.into());
-                }
-                EntityType::Circle(ref circle) => {
-                    let center = {
-                        let dxf::Point { x, y, .. } = circle.center;
-                        Point { x, y }
-                    };
-                    let c = Circle {
-                        center,
-                        radius: circle.radius,
-                    };
-                    lines.push(c.into());
-                }
-                _ => {
-                    eprintln!("unhandled entity {:?}", e.specific);
-                }
-            }
-        }
-
-        // Draw some lines
-        rl.push_with_bag(
-            &mut gb,
-            FatShape {
-                transform: Affine::scale(2.5).then_translate(vello::kurbo::Vec2 {
-                    x: 1920.0,
-                    y: 480.0,
-                }),
-                paint: FatPaint {
-                    stroke: Stroke::new(1.414 / 2.5 / 2.0),
-                    stroke_paint: Some(Color::WHITE.into()),
-                    fill_paint: None,
-                },
-                subshapes: lines,
+    // Draw some lines
+    rl.push_with_bag(
+        &mut gb,
+        FatShape {
+            transform,
+            paint: FatPaint {
+                stroke: Stroke::new(default_line_weight),
+                stroke_paint: Some(Color::WHITE.into()),
+                fill_paint: None,
             },
-        );
-    }
+            subshapes: lines.clone(), // FIXME: very bad
+        },
+    );
 
     // AnyShape is an enum and there's no elegant way to reverse this to an impl Shape.
     macro_rules! render_anyshape_match {
-        ( $paint:ident, $transform:ident, $subshape:ident, $($name:ident),* ) => {
+        ( $paint:ident, $transform:ident, $subshape:ident, $($name:ident)|* ) => {
             let FatPaint {
                 ref stroke,
                 ref stroke_paint,
@@ -323,17 +452,16 @@ fn add_shapes_to_scene(scene: &mut Scene) {
                             paint,
                             transform,
                             subshape,
-                            Arc,
-                            BezPath,
-                            Circle,
-                            CircleSegment,
-                            CubicBez,
-                            Ellipse,
-                            Line,
-                            PathSeg,
-                            QuadBez,
-                            Rect,
-                            RoundedRect
+                            Arc | BezPath
+                                | Circle
+                                | CircleSegment
+                                | CubicBez
+                                | Ellipse
+                                | Line
+                                | PathSeg
+                                | QuadBez
+                                | Rect
+                                | RoundedRect
                         );
                     }
                 }
