@@ -1,0 +1,18 @@
+[package]
+name = "vello_simple"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vello = "0.4.0"
+anyhow = "1.0.93"
+pollster = "0.4.0"
+winit = "0.30.8"
+tabulon = { version = "0.1.0", path = "../../tabulon" }
+
+[lints]
+workspace = true

@@ -32,6 +32,10 @@ fn ensure_libm_dependency_used() -> f32 {
     libm::sqrtf(4_f32)
 }
 
+pub mod graphics_bag;
+pub mod render_layer;
+pub mod shape;
+
 #[cfg(test)]
 mod tests {
     // CI will fail unless cargo nextest can execute at least one test per workspace.
