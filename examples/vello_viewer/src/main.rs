@@ -31,6 +31,14 @@ enum RenderState<'s> {
     Suspended(Option<Arc<Window>>),
 }
 
+#[derive(Default)]
+struct GestureState {
+    /// Currently panning with primary pointer.
+    primary_pan: bool,
+    /// Cursor position.
+    cursor_pos: Point,
+}
+
 struct SimpleVelloApp<'s> {
     /// The vello `RenderContext` which is a global context that lasts for the lifetime of the application.
     context: RenderContext,
@@ -48,10 +56,19 @@ struct SimpleVelloApp<'s> {
     /// Collection of shapes to be stroked with the default line style.
     lines: SmallVec<[AnyShape; 1]>,
 
+    /// Graphics bag.
+    graphics: GraphicsBag,
+
+    /// Active render layer.
+    render_layer: RenderLayer,
+
     /// View transform of the drawing.
     view_transform: Affine,
     /// View scale of the drawing.
     view_scale: f64,
+
+    /// State of gesture processing (e.g. panning, zooming).
+    gestures: GestureState,
 }
 
 impl ApplicationHandler for SimpleVelloApp<'_> {
@@ -66,12 +83,28 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
         // Create a vello Surface.
         let size = window.inner_size();
-        let surface_future = self.context.create_surface(
-            window.clone(),
-            size.width,
-            size.height,
-            wgpu::PresentMode::AutoVsync,
-        );
+        let surface_future = {
+            let surface = self
+                .context
+                .instance
+                .create_surface(wgpu::SurfaceTarget::from(window.clone()))
+                .expect("Error creating surface");
+            let dev_id = pollster::block_on(self.context.device(Some(&surface)))
+                .expect("No compatible device");
+            let device_handle = &self.context.devices[dev_id];
+            let capabilities = surface.get_capabilities(device_handle.adapter());
+            let present_mode = if capabilities
+                .present_modes
+                .contains(&wgpu::PresentMode::Mailbox)
+            {
+                wgpu::PresentMode::Mailbox
+            } else {
+                wgpu::PresentMode::AutoVsync
+            };
+            self.context
+                .create_render_surface(surface, size.width, size.height, present_mode)
+        };
+
         let surface = pollster::block_on(surface_future).expect("Error creating surface");
 
         // Create a vello Renderer for the surface (using its device id).
@@ -84,91 +117,6 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         self.state = RenderState::Active {
             surface: Box::new(surface),
             window,
-        };
-
-        self.lines = {
-            use dxf::{entities::EntityType, Drawing};
-
-            let drawing = Drawing::load_file(
-                std::env::args()
-                    .next_back()
-                    .expect("Please provide a path in the last argument."),
-            )
-            .unwrap();
-
-            let mut lines = SmallVec::<[AnyShape; 1]>::new();
-
-            for e in drawing.entities() {
-                match e.specific {
-                    EntityType::Arc(ref a) => {
-                        let dxf::entities::Arc {
-                            center,
-                            radius,
-                            start_angle,
-                            end_angle,
-                            ..
-                        } = a.clone();
-                        lines.push(
-                            KurboArc {
-                                center: Point {
-                                    x: center.x,
-                                    y: center.y,
-                                },
-                                radii: Vec2::new(radius, radius),
-                                start_angle,
-                                // FIXME: don't know if this is correct.
-                                sweep_angle: end_angle,
-                                x_rotation: 0.0,
-                            }
-                            .into(),
-                        );
-                    }
-                    EntityType::Line(ref line) => {
-                        let p0 = {
-                            let dxf::Point { x, y, .. } = line.p1;
-                            Point { x, y }
-                        };
-                        let p1 = {
-                            let dxf::Point { x, y, .. } = line.p2;
-                            Point { x, y }
-                        };
-                        let l = Line { p0, p1 };
-                        lines.push(l.into());
-                    }
-                    EntityType::Circle(ref circle) => {
-                        let center = {
-                            let dxf::Point { x, y, .. } = circle.center;
-                            Point { x, y }
-                        };
-                        let c = Circle {
-                            center,
-                            radius: circle.radius,
-                        };
-                        lines.push(c.into());
-                    }
-                    EntityType::LwPolyline(ref lwp) => {
-                        // FIXME: LwPolyline supports variable width and arcs.
-                        if lwp.vertices.len() >= 2 {
-                            let mut bp = BezPath::new();
-                            fn lwp_vertex_to_point(
-                                dxf::LwPolylineVertex { x, y, .. }: dxf::LwPolylineVertex,
-                            ) -> Point {
-                                Point { x, y }
-                            }
-                            bp.push(PathEl::MoveTo(lwp_vertex_to_point(lwp.vertices[0])));
-                            for i in 1..(lwp.vertices.len() - 1) {
-                                bp.push(PathEl::LineTo(lwp_vertex_to_point(lwp.vertices[i])));
-                            }
-                            lines.push(bp.into());
-                        }
-                    }
-                    _ => {
-                        eprintln!("unhandled entity {:?}", e.specific);
-                    }
-                }
-            }
-
-            lines
         };
 
         let bounds = self
@@ -186,13 +134,8 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         })
         .then_scale(self.view_scale);
 
-        self.scene.reset();
-        add_shapes_to_scene(
-            &mut self.scene,
-            self.view_transform,
-            &self.lines,
-            1. / self.view_scale,
-        );
+        update_transform(&mut self.graphics, self.view_transform, self.view_scale);
+        add_shapes_to_scene(&mut self.scene, &self.graphics, &self.render_layer);
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -207,40 +150,27 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let surface = match &mut self.state {
-            RenderState::Active { surface, window } if window.id() == window_id => surface,
+        let (surface, window) = match &mut self.state {
+            RenderState::Active { surface, window } if window.id() == window_id => {
+                (surface, window)
+            }
             _ => return,
         };
 
+        let mut reproject = false;
+
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::KeyboardInput { event, .. } => {
+                use winit::keyboard::{Key, NamedKey};
+                if event.state.is_pressed() && event.logical_key == Key::Named(NamedKey::Escape) {
+                    event_loop.exit();
+                }
+            }
 
             WindowEvent::Resized(size) => {
                 self.context
                     .resize_surface(surface, size.width, size.height);
-
-                let bounds = self
-                    .lines
-                    .iter()
-                    .map(AnyShape::bounding_box)
-                    .fold(vello::kurbo::Rect::default(), |a, x| a.union(x));
-
-                self.view_scale = (size.height as f64 / bounds.size().height)
-                    .min(size.width as f64 / bounds.size().width);
-
-                self.view_transform = Affine::translate(Vec2 {
-                    x: -bounds.min_x(),
-                    y: -bounds.min_y(),
-                })
-                .then_scale(self.view_scale);
-
-                self.scene.reset();
-                add_shapes_to_scene(
-                    &mut self.scene,
-                    self.view_transform,
-                    &self.lines,
-                    1. / self.view_scale,
-                );
             }
 
             WindowEvent::CursorMoved { position, .. } => {
@@ -249,26 +179,74 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     Point { x, y }
                 };
 
-                let mut gb = GraphicsBag::default();
-                gb.push(FatShape {
-                    transform: self.view_transform,
-                    paint: FatPaint {
-                        stroke: Stroke::new(1.0 / self.view_scale),
-                        stroke_paint: Some(Color::WHITE.into()),
-                        fill_paint: None,
-                    },
-                    subshapes: self.lines.clone(),
-                });
+                if self.gestures.primary_pan {
+                    self.view_transform = self
+                        .view_transform
+                        .then_translate(-(self.gestures.cursor_pos - p));
+                    let scene = self.scene.clone();
+                    self.scene.reset();
+                    self.scene.append(
+                        &scene,
+                        Some(Affine::translate(-(self.gestures.cursor_pos - p))),
+                    );
+                    window.request_redraw();
+                } else {
+                    let mut gb = GraphicsBag::default();
+                    gb.push(FatShape {
+                        transform: self.view_transform,
+                        paint: FatPaint {
+                            stroke: Stroke::new(1.0 / self.view_scale),
+                            stroke_paint: Some(Color::WHITE.into()),
+                            fill_paint: None,
+                        },
+                        subshapes: self.lines.clone(),
+                    });
 
-                if let Some(item) = gb.get(0) {
-                    match item {
-                        GraphicsItem::FatShape(s) => {
-                            if let Some(p) = s.pick(p, 10000.).first() {
-                                println!("closest item: {:?}", s.subshapes[*p]);
+                    if let Some(item) = gb.get(0) {
+                        match item {
+                            GraphicsItem::FatShape(s) => {
+                                if let Some(p) = s.pick(p, 10000.).first() {
+                                    println!("closest item: {:?}", s.subshapes[*p]);
+                                }
                             }
                         }
                     }
                 }
+                self.gestures.cursor_pos = p;
+            }
+
+            WindowEvent::MouseInput {
+                state,
+                button: winit::event::MouseButton::Left,
+                ..
+            } => {
+                self.gestures.primary_pan = matches!(state, winit::event::ElementState::Pressed);
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                use winit::{dpi::PhysicalPosition, event::MouseScrollDelta::*};
+                let d = match delta {
+                    LineDelta(_, y) => y as f64 * 0.1,
+                    PixelDelta(PhysicalPosition::<f64> { y, .. }) => y * 0.05,
+                };
+
+                self.view_transform = self
+                    .view_transform
+                    .then_translate(-self.gestures.cursor_pos.to_vec2())
+                    .then_scale(1. + d)
+                    .then_translate(self.gestures.cursor_pos.to_vec2());
+                self.view_scale *= 1. + d;
+                reproject = true;
+            }
+
+            WindowEvent::PinchGesture { delta: d, .. } => {
+                self.view_transform = self
+                    .view_transform
+                    .then_translate(-self.gestures.cursor_pos.to_vec2())
+                    .then_scale(1. + d)
+                    .then_translate(self.gestures.cursor_pos.to_vec2());
+                self.view_scale *= 1. + d;
+                reproject = true;
             }
 
             WindowEvent::RedrawRequested => {
@@ -305,6 +283,12 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
             }
             _ => {}
         }
+
+        if reproject {
+            update_transform(&mut self.graphics, self.view_transform, self.view_scale);
+            add_shapes_to_scene(&mut self.scene, &self.graphics, &self.render_layer);
+            window.request_redraw();
+        }
     }
 }
 
@@ -315,9 +299,110 @@ fn main() -> Result<()> {
         state: RenderState::Suspended(None),
         scene: Scene::new(),
         lines: Default::default(),
+        graphics: Default::default(),
+        render_layer: Default::default(),
         view_transform: Default::default(),
         view_scale: 1.0,
+        gestures: Default::default(),
     };
+
+    app.lines = {
+        use dxf::{entities::EntityType, Drawing};
+
+        let drawing = Drawing::load_file(
+            std::env::args()
+                .next_back()
+                .expect("Please provide a path in the last argument."),
+        )
+        .unwrap();
+
+        let mut lines = SmallVec::<[AnyShape; 1]>::new();
+
+        for e in drawing.entities() {
+            match e.specific {
+                EntityType::Arc(ref a) => {
+                    let dxf::entities::Arc {
+                        center,
+                        radius,
+                        start_angle,
+                        end_angle,
+                        ..
+                    } = a.clone();
+                    lines.push(
+                        KurboArc {
+                            center: Point {
+                                x: center.x,
+                                y: center.y,
+                            },
+                            radii: Vec2::new(radius, radius),
+                            start_angle,
+                            // FIXME: don't know if this is correct.
+                            sweep_angle: end_angle,
+                            x_rotation: 0.0,
+                        }
+                        .into(),
+                    );
+                }
+                EntityType::Line(ref line) => {
+                    let p0 = {
+                        let dxf::Point { x, y, .. } = line.p1;
+                        Point { x, y }
+                    };
+                    let p1 = {
+                        let dxf::Point { x, y, .. } = line.p2;
+                        Point { x, y }
+                    };
+                    let l = Line { p0, p1 };
+                    lines.push(l.into());
+                }
+                EntityType::Circle(ref circle) => {
+                    let center = {
+                        let dxf::Point { x, y, .. } = circle.center;
+                        Point { x, y }
+                    };
+                    let c = Circle {
+                        center,
+                        radius: circle.radius,
+                    };
+                    lines.push(c.into());
+                }
+                EntityType::LwPolyline(ref lwp) => {
+                    // FIXME: LwPolyline supports variable width and arcs.
+                    if lwp.vertices.len() >= 2 {
+                        let mut bp = BezPath::new();
+                        fn lwp_vertex_to_point(
+                            dxf::LwPolylineVertex { x, y, .. }: dxf::LwPolylineVertex,
+                        ) -> Point {
+                            Point { x, y }
+                        }
+                        bp.push(PathEl::MoveTo(lwp_vertex_to_point(lwp.vertices[0])));
+                        for i in 1..(lwp.vertices.len() - 1) {
+                            bp.push(PathEl::LineTo(lwp_vertex_to_point(lwp.vertices[i])));
+                        }
+                        lines.push(bp.into());
+                    }
+                }
+                _ => {
+                    eprintln!("unhandled entity {:?}", e.specific);
+                }
+            }
+        }
+
+        lines
+    };
+
+    app.render_layer.push_with_bag(
+        &mut app.graphics,
+        FatShape {
+            transform: Default::default(),
+            paint: FatPaint {
+                stroke: Default::default(),
+                stroke_paint: Some(Color::WHITE.into()),
+                fill_paint: None,
+            },
+            subshapes: app.lines.clone(),
+        },
+    );
 
     let event_loop = EventLoop::new()?;
     event_loop
@@ -355,31 +440,26 @@ use tabulon::{
     shape::{AnyShape, FatPaint, FatShape, SmallVec},
 };
 
+/// Update the transform/scale in all the items in a `GraphicsBag`
+fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
+    for item in &mut graphics.items {
+        match item {
+            GraphicsItem::FatShape(s) => {
+                s.transform = transform;
+                s.paint = FatPaint {
+                    stroke: Stroke::new(1.0 / scale),
+                    stroke_paint: Some(Color::WHITE.into()),
+                    fill_paint: None,
+                }
+            }
+        }
+    }
+}
+
 /// Add shapes to a vello scene. This does not actually render the shapes, but adds them
 /// to the Scene data structure which represents a set of objects to draw.
-fn add_shapes_to_scene(
-    scene: &mut Scene,
-    transform: Affine,
-    lines: &SmallVec<[AnyShape; 1]>,
-    default_line_weight: f64,
-) {
-    let mut rl = RenderLayer::default();
-    let mut gb = GraphicsBag::default();
-
-    // Draw some lines
-    rl.push_with_bag(
-        &mut gb,
-        FatShape {
-            transform,
-            paint: FatPaint {
-                stroke: Stroke::new(default_line_weight),
-                stroke_paint: Some(Color::WHITE.into()),
-                fill_paint: None,
-            },
-            subshapes: lines.clone(), // FIXME: very bad
-        },
-    );
-
+fn add_shapes_to_scene(scene: &mut Scene, graphics: &GraphicsBag, render_layer: &RenderLayer) {
+    scene.reset();
     // AnyShape is an enum and there's no elegant way to reverse this to an impl Shape.
     macro_rules! render_anyshape_match {
         ( $paint:ident, $transform:ident, $subshape:ident, $($name:ident)|* ) => {
@@ -408,8 +488,8 @@ fn add_shapes_to_scene(
         }
     }
 
-    for idx in rl.indices {
-        if let Some(ref gi) = gb.get(idx) {
+    for idx in &render_layer.indices {
+        if let Some(ref gi) = graphics.get(*idx) {
             match gi {
                 GraphicsItem::FatShape(FatShape {
                     paint,

@@ -16,7 +16,8 @@ pub enum GraphicsItem {
 /// Bag of [`GraphicsItem`]s.
 #[derive(Debug, Default)]
 pub struct GraphicsBag {
-    items: Vec<GraphicsItem>,
+    /// [`GraphicsItem`]s in the bag.
+    pub items: Vec<GraphicsItem>,
 }
 
 impl GraphicsBag {
