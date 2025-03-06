@@ -20,6 +20,8 @@ use winit::window::Window;
 
 use vello::wgpu;
 
+extern crate alloc;
+
 enum RenderState<'s> {
     /// `RenderSurface` and `Window` for active rendering.
     Active {
@@ -183,34 +185,15 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     self.view_transform = self
                         .view_transform
                         .then_translate(-(self.gestures.cursor_pos - p));
-                    let scene = self.scene.clone();
-                    self.scene.reset();
-                    self.scene.append(
-                        &scene,
+                    let mut scene = Scene::new();
+                    scene.append(
+                        &self.scene,
                         Some(Affine::translate(-(self.gestures.cursor_pos - p))),
                     );
+                    self.scene = scene;
                     window.request_redraw();
                 } else {
-                    let mut gb = GraphicsBag::default();
-                    gb.push(FatShape {
-                        transform: self.view_transform,
-                        paint: FatPaint {
-                            stroke: Stroke::new(1.0 / self.view_scale),
-                            stroke_paint: Some(Color::WHITE.into()),
-                            fill_paint: None,
-                        },
-                        subshapes: self.lines.clone(),
-                    });
-
-                    if let Some(item) = gb.get(0) {
-                        match item {
-                            GraphicsItem::FatShape(s) => {
-                                if let Some(p) = s.pick(p, 10000.).first() {
-                                    println!("closest item: {:?}", s.subshapes[*p]);
-                                }
-                            }
-                        }
-                    }
+                    // TODO: Fire off picking process for highlighting/selection
                 }
                 self.gestures.cursor_pos = p;
             }
@@ -307,6 +290,7 @@ fn main() -> Result<()> {
     };
 
     app.lines = {
+        use alloc::collections::{btree_map::BTreeMap, btree_set::BTreeSet};
         use dxf::{entities::EntityType, Drawing};
 
         let drawing = Drawing::load_file(
@@ -316,74 +300,55 @@ fn main() -> Result<()> {
         )
         .unwrap();
 
+        let visible_layers: BTreeSet<&str> = drawing
+            .layers()
+            .filter_map(|l| l.is_layer_on.then_some(l.name.as_str()))
+            .collect();
+
+        // FIXME: It's conceivable that a BLOCK may have an INSERT so
+        //        we should figure out something sane to do with that.
+        let blocks: BTreeMap<&str, SmallVec<[AnyShape; 4]>> = drawing
+            .blocks()
+            .map(|b| {
+                (
+                    b.name.as_str(),
+                    b.entities.iter().filter_map(shape_from_entity).collect(),
+                )
+            })
+            .collect();
+
         let mut lines = SmallVec::<[AnyShape; 1]>::new();
 
         for e in drawing.entities() {
+            if !(e.common.layer.is_empty() || visible_layers.contains(e.common.layer.as_str())) {
+                continue;
+            }
             match e.specific {
-                EntityType::Arc(ref a) => {
-                    let dxf::entities::Arc {
-                        center,
-                        radius,
-                        start_angle,
-                        end_angle,
-                        ..
-                    } = a.clone();
-                    lines.push(
-                        KurboArc {
-                            center: Point {
-                                x: center.x,
-                                y: center.y,
-                            },
-                            radii: Vec2::new(radius, radius),
-                            start_angle,
-                            // FIXME: don't know if this is correct.
-                            sweep_angle: end_angle,
-                            x_rotation: 0.0,
+                EntityType::Insert(ref ins) => {
+                    if let Some(b) = blocks.get(ins.name.as_str()) {
+                        let base_transform =
+                            Affine::scale_non_uniform(ins.x_scale_factor, ins.y_scale_factor);
+                        let location = point_from_dxf_point(&ins.location);
+                        for i in 0..ins.row_count {
+                            for j in 0..ins.column_count {
+                                let transform = base_transform
+                                    .then_translate(Vec2::new(
+                                        j as f64 * ins.column_spacing,
+                                        i as f64 * ins.row_spacing,
+                                    ))
+                                    .then_rotate(ins.rotation * (core::f64::consts::PI / 180.))
+                                    .then_translate(location.to_vec2());
+                                for s in b {
+                                    lines.push(s.transform(transform));
+                                }
+                            }
                         }
-                        .into(),
-                    );
-                }
-                EntityType::Line(ref line) => {
-                    let p0 = {
-                        let dxf::Point { x, y, .. } = line.p1;
-                        Point { x, y }
-                    };
-                    let p1 = {
-                        let dxf::Point { x, y, .. } = line.p2;
-                        Point { x, y }
-                    };
-                    let l = Line { p0, p1 };
-                    lines.push(l.into());
-                }
-                EntityType::Circle(ref circle) => {
-                    let center = {
-                        let dxf::Point { x, y, .. } = circle.center;
-                        Point { x, y }
-                    };
-                    let c = Circle {
-                        center,
-                        radius: circle.radius,
-                    };
-                    lines.push(c.into());
-                }
-                EntityType::LwPolyline(ref lwp) => {
-                    // FIXME: LwPolyline supports variable width and arcs.
-                    if lwp.vertices.len() >= 2 {
-                        let mut bp = BezPath::new();
-                        fn lwp_vertex_to_point(
-                            dxf::LwPolylineVertex { x, y, .. }: dxf::LwPolylineVertex,
-                        ) -> Point {
-                            Point { x, y }
-                        }
-                        bp.push(PathEl::MoveTo(lwp_vertex_to_point(lwp.vertices[0])));
-                        for i in 1..(lwp.vertices.len() - 1) {
-                            bp.push(PathEl::LineTo(lwp_vertex_to_point(lwp.vertices[i])));
-                        }
-                        lines.push(bp.into());
                     }
                 }
                 _ => {
-                    eprintln!("unhandled entity {:?}", e.specific);
+                    if let Some(s) = shape_from_entity(e) {
+                        lines.push(s);
+                    }
                 }
             }
         }
@@ -515,6 +480,79 @@ fn add_shapes_to_scene(scene: &mut Scene, graphics: &GraphicsBag, render_layer: 
                     }
                 }
             }
+        }
+    }
+}
+
+fn point_from_dxf_point(p: &dxf::Point) -> Point {
+    let dxf::Point { x, y, .. } = *p;
+    Point { x, y }
+}
+
+/// Convert entity to lines
+fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
+    use dxf::entities::EntityType;
+    match e.specific {
+        EntityType::Arc(ref a) => {
+            let dxf::entities::Arc {
+                center,
+                radius,
+                start_angle,
+                end_angle,
+                ..
+            } = a.clone();
+            Some(
+                KurboArc {
+                    center: Point {
+                        x: center.x,
+                        y: center.y,
+                    },
+                    radii: Vec2::new(radius, radius),
+                    start_angle,
+                    // FIXME: don't know if this is correct.
+                    sweep_angle: end_angle,
+                    x_rotation: 0.0,
+                }
+                .into(),
+            )
+        }
+        EntityType::Line(ref line) => {
+            let p0 = point_from_dxf_point(&line.p1);
+            let p1 = point_from_dxf_point(&line.p2);
+            Some(Line { p0, p1 }.into())
+        }
+        EntityType::Circle(ref circle) => {
+            let center = point_from_dxf_point(&circle.center);
+            let c = Circle {
+                center,
+                radius: circle.radius,
+            };
+            Some(c.into())
+        }
+        EntityType::LwPolyline(ref lwp) => {
+            // FIXME: LwPolyline supports variable width and arcs.
+            if lwp.vertices.len() >= 2 {
+                let mut bp = BezPath::new();
+                fn lwp_vertex_to_point(
+                    dxf::LwPolylineVertex { x, y, .. }: dxf::LwPolylineVertex,
+                ) -> Point {
+                    Point { x, y }
+                }
+                bp.push(PathEl::MoveTo(lwp_vertex_to_point(lwp.vertices[0])));
+                for i in 1..(lwp.vertices.len() - 1) {
+                    bp.push(PathEl::LineTo(lwp_vertex_to_point(lwp.vertices[i])));
+                }
+                Some(bp.into())
+            } else {
+                None
+            }
+        }
+        _ => {
+            // eprintln!(
+            //     "unhandled entity {} {} {:?}",
+            //     e.common.handle.0, e.common.layer, e.specific
+            // );
+            None
         }
     }
 }
