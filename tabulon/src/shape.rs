@@ -76,7 +76,28 @@ macro_rules! impl_any_shape_fun {
     };
 }
 
+macro_rules! impl_any_shape_generic_transform {
+    ( $self:ident, $transform:ident, $($path_first:ident)|*, $($name:ident)|* ) => {
+        match $self {
+            // shapes that need converted into path first
+            $(AnyShape::$path_first(x) => ($transform * x.to_path(DEFAULT_ACCURACY)).into(),)*
+            // shapes that have `impl Mul<...> for Affine`
+            $(AnyShape::$name(x) => ($transform * x.clone()).into(),)*
+        }
+    };
+}
+
 impl AnyShape {
+    /// Transform shape
+    pub fn transform(&self, transform: Affine) -> Self {
+        impl_any_shape_generic_transform!(
+            self,
+            transform,
+            CircleSegment | Rect | RoundedRect,
+            Arc | BezPath | Circle | CubicBez | Ellipse | Line | PathSeg | QuadBez
+        )
+    }
+
     /// `true` if given point is inside the shape.
     pub fn contains(&self, p: Point) -> bool {
         impl_any_shape_fun!(
