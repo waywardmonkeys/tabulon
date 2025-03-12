@@ -43,6 +43,8 @@ pub mod render_layer;
 /// Shapes for rendering and event dispatch.
 pub mod shape;
 
+pub use peniko;
+
 #[cfg(test)]
 mod tests {
     // CI will fail unless cargo nextest can execute at least one test per workspace.
