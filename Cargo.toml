@@ -2,8 +2,9 @@
 resolver = "2"
 members = [
   "tabulon",
+  "tabulon_dxf",
   "examples/vello_simple",
-  "examples/vello_viewer"
+  "examples/vello_viewer",
 ]
 
 [workspace.package]
@@ -70,3 +71,4 @@ clippy.wildcard_dependencies = "warn"
 
 [workspace.dependencies]
 tabulon = { version = "0.1.0", path = "tabulon", default-features = false }
+tabulon_dxf = { version = "0.1.0", path = "tabulon_dxf" }
