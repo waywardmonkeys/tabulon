@@ -8,11 +8,13 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-vello = "0.4.0"
 anyhow = "1.0.93"
 pollster = "0.4.0"
+vello = "0.4.0"
 winit = "0.30.8"
+
 tabulon = { version = "0.1.0", path = "../../tabulon" }
+tabulon_vello = { workspace = true }
 
 [lints]
 workspace = true
