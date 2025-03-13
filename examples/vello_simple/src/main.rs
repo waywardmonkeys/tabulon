@@ -192,11 +192,8 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
 /// Add shapes to a vello scene. This does not actually render the shapes, but adds them
 /// to the Scene data structure which represents a set of objects to draw.
 fn add_shapes_to_scene(scene: &mut Scene) {
-    use tabulon::shape::{AnyShape, FatPaint, FatShape, SmallVec};
-    use tabulon::{
-        graphics_bag::{GraphicsBag, GraphicsItem},
-        render_layer::RenderLayer,
-    };
+    use tabulon::shape::{FatPaint, FatShape, SmallVec};
+    use tabulon::{graphics_bag::GraphicsBag, render_layer::RenderLayer};
 
     let mut rl = RenderLayer::default();
     let mut gb = GraphicsBag::default();
@@ -257,62 +254,5 @@ fn add_shapes_to_scene(scene: &mut Scene) {
         },
     );
 
-    // AnyShape is an enum and there's no elegant way to reverse this to an impl Shape.
-    macro_rules! render_anyshape_match {
-        ( $paint:ident, $transform:ident, $subshape:ident, $($name:ident),* ) => {
-            let FatPaint {
-                ref stroke,
-                ref stroke_paint,
-                ref fill_paint,
-            } = $paint;
-
-            match $subshape {
-                $(AnyShape::$name(x) =>  {
-                    if let Some(ref stroke_paint) = stroke_paint {
-                        scene.stroke(&stroke, *$transform, stroke_paint, None, &x);
-                    }
-                    if let Some(ref fill_paint) = fill_paint {
-                        scene.fill(
-                            vello::peniko::Fill::NonZero,
-                            *$transform,
-                            fill_paint,
-                            None,
-                            &x,
-                        );
-                    }
-                }),*
-            }
-        }
-    }
-
-    for idx in rl.indices {
-        if let Some(ref gi) = gb.get(idx) {
-            match gi {
-                GraphicsItem::FatShape(FatShape {
-                    paint,
-                    transform,
-                    subshapes,
-                }) => {
-                    for subshape in subshapes {
-                        render_anyshape_match!(
-                            paint,
-                            transform,
-                            subshape,
-                            Arc,
-                            BezPath,
-                            Circle,
-                            CircleSegment,
-                            CubicBez,
-                            Ellipse,
-                            Line,
-                            PathSeg,
-                            QuadBez,
-                            Rect,
-                            RoundedRect
-                        );
-                    }
-                }
-            }
-        }
-    }
+    tabulon_vello::add_render_layer_to_scene(scene, &gb, &rl);
 }
