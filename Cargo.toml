@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-  "tabulon",
-  "tabulon_dxf",
-  "tabulon_vello",
-  "examples/vello_simple",
-  "examples/vello_viewer",
+    "tabulon",
+    "tabulon_dxf",
+    "tabulon_vello",
+    "examples/vello_simple",
+    "examples/vello_viewer",
 ]
 
 [workspace.package]
