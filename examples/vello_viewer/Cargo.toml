@@ -13,6 +13,8 @@ pollster = "0.4.0"
 vello = "0.4.0"
 winit = "0.30.8"
 
+static_aabb2d_index = { version = "2.0.0", features = ["unsafe_optimizations"] }
+
 tabulon = { workspace = true, features = ["std"] }
 tabulon_dxf = { workspace = true }
 tabulon_vello = { workspace = true }

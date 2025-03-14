@@ -22,6 +22,8 @@ use vello::wgpu;
 
 extern crate alloc;
 
+use tabulon_vello::add_render_layer_to_scene;
+
 enum RenderState<'s> {
     /// `RenderSurface` and `Window` for active rendering.
     Active {
@@ -57,6 +59,12 @@ struct SimpleVelloApp<'s> {
 
     /// Collection of shapes to be stroked with the default line style.
     lines: SmallVec<[AnyShape; 1]>,
+
+    /// Index of bounding boxes for hit testing
+    bounds_index: StaticAABB2DIndex<f64>,
+
+    /// Which shape is closest to the cursor?
+    pick: Option<usize>,
 
     /// Graphics bag.
     graphics: GraphicsBag,
@@ -137,7 +145,8 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         .then_scale(self.view_scale);
 
         update_transform(&mut self.graphics, self.view_transform, self.view_scale);
-        add_shapes_to_scene(&mut self.scene, &self.graphics, &self.render_layer);
+        self.scene.reset();
+        add_render_layer_to_scene(&mut self.scene, &self.graphics, &self.render_layer);
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -181,6 +190,8 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     Point { x, y }
                 };
 
+                let dp = self.view_transform.inverse() * p;
+
                 if self.gestures.primary_pan {
                     self.view_transform = self
                         .view_transform
@@ -193,7 +204,30 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     self.scene = scene;
                     window.request_redraw();
                 } else {
-                    // TODO: Fire off picking process for highlighting/selection
+                    const PICK_DIST: f64 = 2.828;
+                    let sp = PICK_DIST * 1.0 / self.view_scale;
+
+                    let pick = self
+                        .bounds_index
+                        .query(dp.x - sp, dp.y - sp, dp.x + sp, dp.y + sp)
+                        .iter()
+                        .filter(|i| self.lines[**i].dist_sq(dp) < (PICK_DIST * PICK_DIST))
+                        .reduce(|a, b| {
+                            if self.lines[*b].dist_sq(dp) < self.lines[*a].dist_sq(dp) {
+                                b
+                            } else {
+                                a
+                            }
+                        })
+                        .copied();
+
+                    if self.pick != pick {
+                        if let Some(i) = pick {
+                            println!("{:?} was close to cursor.", self.lines[i]);
+                        }
+                        self.pick = pick;
+                        reproject = true;
+                    }
                 }
                 self.gestures.cursor_pos = p;
             }
@@ -269,32 +303,58 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
         if reproject {
             update_transform(&mut self.graphics, self.view_transform, self.view_scale);
-            add_shapes_to_scene(&mut self.scene, &self.graphics, &self.render_layer);
+            self.scene.reset();
+            add_render_layer_to_scene(&mut self.scene, &self.graphics, &self.render_layer);
+
+            if let Some(i) = self.pick {
+                let mut gb = GraphicsBag::default();
+                let mut rl = RenderLayer::default();
+
+                rl.push_with_bag(
+                    &mut gb,
+                    FatShape {
+                        transform: self.view_transform,
+                        paint: FatPaint {
+                            stroke: Stroke::new(1.414 / self.view_scale),
+                            stroke_paint: Some(palette::css::GOLDENROD.into()),
+                            fill_paint: None,
+                        },
+                        subshapes: SmallVec::from([self.lines[i].clone()]),
+                    },
+                );
+
+                add_render_layer_to_scene(&mut self.scene, &gb, &rl);
+            }
+
             window.request_redraw();
         }
     }
 }
 
 fn main() -> Result<()> {
+    let lines = tabulon_dxf::load_file_default_layers(
+        std::env::args()
+            .next_back()
+            .expect("Please provide a path in the last argument."),
+    )
+    .expect("DXF file failed to load.");
+
+    let bounds_index = compute_bounds_index(&lines);
+
     let mut app = SimpleVelloApp {
         context: RenderContext::new(),
         renderers: vec![],
         state: RenderState::Suspended(None),
         scene: Scene::new(),
-        lines: Default::default(),
+        lines,
+        bounds_index,
+        pick: None,
         graphics: Default::default(),
         render_layer: Default::default(),
         view_transform: Default::default(),
         view_scale: 1.0,
         gestures: Default::default(),
     };
-
-    app.lines = tabulon_dxf::load_file_default_layers(
-        std::env::args()
-            .next_back()
-            .expect("Please provide a path in the last argument."),
-    )
-    .expect("DXF file failed to load.");
 
     app.render_layer.push_with_bag(
         &mut app.graphics,
@@ -361,9 +421,14 @@ fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
     }
 }
 
-/// Add shapes to a vello scene. This does not actually render the shapes, but adds them
-/// to the Scene data structure which represents a set of objects to draw.
-fn add_shapes_to_scene(scene: &mut Scene, graphics: &GraphicsBag, render_layer: &RenderLayer) {
-    scene.reset();
-    tabulon_vello::add_render_layer_to_scene(scene, graphics, render_layer);
+use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
+
+/// Compute an index of bounding boxes for shapes.
+fn compute_bounds_index(lines: &SmallVec<[AnyShape; 1]>) -> StaticAABB2DIndex<f64> {
+    let mut builder = StaticAABB2DIndexBuilder::new(lines.len());
+    for shape in lines {
+        let bbox = shape.bounding_box();
+        builder.add(bbox.min_x(), bbox.min_y(), bbox.max_x(), bbox.max_y());
+    }
+    builder.build().unwrap()
 }
