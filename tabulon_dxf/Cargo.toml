@@ -21,7 +21,7 @@ tabulon = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3.1", features = ["wasm_js"] }
-uuid = { version = "1.3.3", features = ["rng-rand", "serde", "v4"]}
+uuid = { version = "1.3.3", features = ["rng-rand", "serde", "v4"] }
 
 [lints]
 workspace = true

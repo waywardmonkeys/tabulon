@@ -21,7 +21,7 @@ std = ["peniko/std"]
 libm = ["dep:libm", "peniko/libm"]
 
 [dependencies]
-peniko = { version = "0.3.1", default-features=false }
+peniko = { version = "0.3.1", default-features = false }
 smallvec = "1.13.2"
 
 [dependencies.libm]
