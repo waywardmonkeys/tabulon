@@ -75,6 +75,25 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                 None
             }
         }
+        EntityType::Polyline(ref pl) => {
+            use dxf::entities::Vertex;
+            // FIXME: Polyline variable width and arcs, and a variety of other things.
+            //        In some cases vertices might actually be indices?
+            let vertices: Vec<&Vertex> = pl.vertices().collect();
+            if vertices.len() >= 2 && !pl.is_polyface_mesh() && !pl.is_3d_polygon_mesh() {
+                let mut bp = BezPath::new();
+                bp.push(PathEl::MoveTo(point_from_dxf_point(&vertices[0].location)));
+                for v in vertices.iter().skip(1) {
+                    bp.push(PathEl::LineTo(point_from_dxf_point(&v.location)));
+                }
+                if pl.is_closed() {
+                    bp.close_path();
+                }
+                Some(bp.into())
+            } else {
+                None
+            }
+        }
         _ => {
             // eprintln!(
             //     "unhandled entity {} {} {:?}",
