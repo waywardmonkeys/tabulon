@@ -64,8 +64,11 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                     Point { x, y }
                 }
                 bp.push(PathEl::MoveTo(lwp_vertex_to_point(lwp.vertices[0])));
-                for i in 1..(lwp.vertices.len() - 1) {
-                    bp.push(PathEl::LineTo(lwp_vertex_to_point(lwp.vertices[i])));
+                for v in lwp.vertices.iter().skip(1) {
+                    bp.push(PathEl::LineTo(lwp_vertex_to_point(*v)));
+                }
+                if lwp.is_closed() {
+                    bp.close_path();
                 }
                 Some(bp.into())
             } else {
