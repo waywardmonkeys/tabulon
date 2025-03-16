@@ -157,14 +157,36 @@ impl AnyShape {
             Self::Circle(Circle { center, radius }) => {
                 (center.distance_squared(p) - radius * radius).abs()
             }
-            _ => {
-                if self.contains(p) {
-                    0.0
-                } else {
-                    // FIXME: this is obviously wrong
-                    f64::INFINITY
-                }
-            }
+            // TODO: do this the cheaper way
+            Self::Ellipse(e) => e
+                .path_segments(DEFAULT_ACCURACY)
+                .fold(f64::INFINITY, |a, b| {
+                    a.min(b.nearest(p, DEFAULT_ACCURACY).distance_sq)
+                }),
+            // TODO: do this the cheaper way
+            Self::Arc(e) => e
+                .path_segments(DEFAULT_ACCURACY)
+                .fold(f64::INFINITY, |a, b| {
+                    a.min(b.nearest(p, DEFAULT_ACCURACY).distance_sq)
+                }),
+            // TODO: do this the cheaper way
+            Self::Rect(e) => e
+                .path_segments(DEFAULT_ACCURACY)
+                .fold(f64::INFINITY, |a, b| {
+                    a.min(b.nearest(p, DEFAULT_ACCURACY).distance_sq)
+                }),
+            // TODO: do this the cheaper way
+            Self::RoundedRect(e) => e
+                .path_segments(DEFAULT_ACCURACY)
+                .fold(f64::INFINITY, |a, b| {
+                    a.min(b.nearest(p, DEFAULT_ACCURACY).distance_sq)
+                }),
+            // TODO: do this the cheaper way
+            Self::CircleSegment(e) => e
+                .path_segments(DEFAULT_ACCURACY)
+                .fold(f64::INFINITY, |a, b| {
+                    a.min(b.nearest(p, DEFAULT_ACCURACY).distance_sq)
+                }),
         }
     }
 }
