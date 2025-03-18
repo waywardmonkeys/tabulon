@@ -1,15 +1,24 @@
 // Copyright 2025 the Tabulon Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use crate::graphics_bag::{GraphicsBag, GraphicsItem};
-use crate::shape::FatShape;
-extern crate alloc;
+use crate::{
+    graphics_bag::{GraphicsBag, GraphicsItem},
+    shape::FatShape,
+    text::FatText,
+};
 
+extern crate alloc;
 use alloc::vec::Vec;
 
 impl From<FatShape> for GraphicsItem {
     fn from(s: FatShape) -> Self {
         Self::FatShape(s)
+    }
+}
+
+impl From<FatText> for GraphicsItem {
+    fn from(t: FatText) -> Self {
+        Self::FatText(t)
     }
 }
 
