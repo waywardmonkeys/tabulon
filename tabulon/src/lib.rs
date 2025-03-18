@@ -43,6 +43,9 @@ pub mod render_layer;
 /// Shapes for rendering and event dispatch.
 pub mod shape;
 
+/// Text items.
+pub mod text;
+
 pub use peniko;
 
 #[cfg(test)]

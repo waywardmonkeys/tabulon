@@ -74,3 +74,5 @@ clippy.wildcard_dependencies = "warn"
 tabulon = { version = "0.1.0", path = "tabulon", default-features = false }
 tabulon_dxf = { version = "0.1.0", path = "tabulon_dxf" }
 tabulon_vello = { version = "0.1.0", path = "tabulon_vello", default-features = false }
+
+parley = { version = "0.3.0", default-features = false }

@@ -22,8 +22,6 @@ use vello::wgpu;
 
 extern crate alloc;
 
-use tabulon_vello::add_render_layer_to_scene;
-
 enum RenderState<'s> {
     /// `RenderSurface` and `Window` for active rendering.
     Active {
@@ -68,6 +66,9 @@ struct SimpleVelloApp<'s> {
 
     /// Graphics bag.
     graphics: GraphicsBag,
+
+    /// Tabulon Vello environment.
+    tv_environment: tabulon_vello::Environment,
 
     /// Active render layer.
     render_layer: RenderLayer,
@@ -146,7 +147,11 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
         update_transform(&mut self.graphics, self.view_transform, self.view_scale);
         self.scene.reset();
-        add_render_layer_to_scene(&mut self.scene, &self.graphics, &self.render_layer);
+        self.tv_environment.add_render_layer_to_scene(
+            &mut self.scene,
+            &self.graphics,
+            &self.render_layer,
+        );
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -304,7 +309,11 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         if reproject {
             update_transform(&mut self.graphics, self.view_transform, self.view_scale);
             self.scene.reset();
-            add_render_layer_to_scene(&mut self.scene, &self.graphics, &self.render_layer);
+            self.tv_environment.add_render_layer_to_scene(
+                &mut self.scene,
+                &self.graphics,
+                &self.render_layer,
+            );
 
             if let Some(i) = self.pick {
                 let mut gb = GraphicsBag::default();
@@ -323,7 +332,8 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     },
                 );
 
-                add_render_layer_to_scene(&mut self.scene, &gb, &rl);
+                self.tv_environment
+                    .add_render_layer_to_scene(&mut self.scene, &gb, &rl);
             }
 
             window.request_redraw();
@@ -332,7 +342,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 }
 
 fn main() -> Result<()> {
-    let lines = tabulon_dxf::load_file_default_layers(
+    let tabulon_dxf::TDDrawing { lines, texts } = tabulon_dxf::load_file_default_layers(
         std::env::args()
             .next_back()
             .expect("Please provide a path in the last argument."),
@@ -350,6 +360,7 @@ fn main() -> Result<()> {
         bounds_index,
         pick: None,
         graphics: Default::default(),
+        tv_environment: Default::default(),
         render_layer: Default::default(),
         view_transform: Default::default(),
         view_scale: 1.0,
@@ -368,6 +379,10 @@ fn main() -> Result<()> {
             subshapes: app.lines.clone(),
         },
     );
+
+    for text in texts {
+        app.render_layer.push_with_bag(&mut app.graphics, text);
+    }
 
     let event_loop = EventLoop::new()?;
     event_loop
@@ -416,6 +431,9 @@ fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
                     stroke_paint: Some(Color::WHITE.into()),
                     fill_paint: None,
                 }
+            }
+            GraphicsItem::FatText(t) => {
+                t.transform = transform;
             }
         }
     }
