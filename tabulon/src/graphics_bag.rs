@@ -4,13 +4,19 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use crate::shape::FatShape;
+use crate::{shape::FatShape, text::FatText};
 
 /// Items for [`GraphicsBag`].
 #[derive(Debug)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Making FatShape more indirect doesn't help, and there is no other elegant way to handle this."
+)]
 pub enum GraphicsItem {
-    /// See [`FatShape`]
+    /// See [`FatShape`].
     FatShape(FatShape),
+    /// See [`FatText`].
+    FatText(FatText),
 }
 
 /// Bag of [`GraphicsItem`]s.

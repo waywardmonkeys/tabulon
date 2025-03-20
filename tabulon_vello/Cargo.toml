@@ -9,12 +9,20 @@ publish = false
 
 [features]
 default = ["std"]
-std = ["tabulon/std"]
-libm = ["tabulon/libm"]
+std = ["parley/std", "tabulon/std"]
+libm = ["parley/libm", "tabulon/libm"]
 
 [dependencies]
-tabulon = { workspace = true }
+parley = { workspace = true }
 vello = "0.4.0"
+
+tabulon = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+parley = { workspace = true, features = ["system"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+parley = { workspace = true, default-features = false }
 
 [lints]
 workspace = true
