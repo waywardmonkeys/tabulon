@@ -43,6 +43,13 @@ pub mod render_layer;
 /// Shapes for rendering and event dispatch.
 pub mod shape;
 
+/// Utilities for transformations.
+pub mod transform;
+pub use transform::*;
+
+/// Text items.
+pub mod text;
+
 pub use peniko;
 
 #[cfg(test)]

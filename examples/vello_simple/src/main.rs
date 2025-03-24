@@ -46,6 +46,9 @@ struct SimpleVelloApp<'s> {
     // description a scene to be drawn (with paths, fills, images, text, etc)
     // which is then passed to a renderer for rendering
     scene: Scene,
+
+    /// Tabulon Vello environment.
+    tv_environment: tabulon_vello::Environment,
 }
 
 impl ApplicationHandler for SimpleVelloApp<'_> {
@@ -112,7 +115,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                 // the same Scene is reused so that the underlying memory allocation can also be reused.
                 self.scene.reset();
 
-                add_shapes_to_scene(&mut self.scene);
+                add_shapes_to_scene(&mut self.tv_environment, &mut self.scene);
 
                 let wgpu::SurfaceConfiguration { width, height, .. } = surface.config;
 
@@ -157,6 +160,7 @@ fn main() -> Result<()> {
         renderers: vec![],
         state: RenderState::Suspended(None),
         scene: Scene::new(),
+        tv_environment: Default::default(),
     };
 
     let event_loop = EventLoop::new()?;
@@ -191,7 +195,7 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
 
 /// Add shapes to a vello scene. This does not actually render the shapes, but adds them
 /// to the Scene data structure which represents a set of objects to draw.
-fn add_shapes_to_scene(scene: &mut Scene) {
+fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &mut Scene) {
     use tabulon::shape::{FatPaint, FatShape, SmallVec};
     use tabulon::{graphics_bag::GraphicsBag, render_layer::RenderLayer};
 
@@ -254,5 +258,5 @@ fn add_shapes_to_scene(scene: &mut Scene) {
         },
     );
 
-    tabulon_vello::add_render_layer_to_scene(scene, &gb, &rl);
+    tv_environment.add_render_layer_to_scene(scene, &gb, &rl);
 }
