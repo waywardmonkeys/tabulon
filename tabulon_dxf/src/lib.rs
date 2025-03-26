@@ -266,7 +266,26 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 for ext in mt.extended_text.iter() {
                     nt.push_str(ext);
                 }
+
+                // TODO: Implement a shared parser for scanning formatting codes into styled text
+                //       and doing unicode substitution for special character codes.
                 let nt = nt
+                    .replace("%%c", "∅")
+                    .replace("%%d", "°")
+                    .replace("%%p", "±")
+                    .replace("%%C", "∅")
+                    .replace("%%D", "°")
+                    .replace("%%P", "±")
+                    .replace("%%%", "%")
+                    // TODO: Implement start/stop underline with styled text.
+                    .replace("\\L", "")
+                    .replace("\\l", "")
+                    // TODO: Implement start/stop overline with styled text.
+                    .replace("\\O", "")
+                    .replace("\\o", "")
+                    // TODO: Implement start/stop strikethrough with styled text.
+                    .replace("\\S", "")
+                    .replace("\\s", "")
                     .replace("\\P", "\n")
                     .replace("\\A1;", "")
                     .replace("\\A0;", "");
@@ -289,7 +308,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     ),
                     alignment: Default::default(),
                     insertion: DirectIsometry::new(
-                        mt.rotation_angle * (core::f64::consts::PI / 180.),
+                        mt.rotation_angle.to_radians(),
                         point_from_dxf_point(&mt.insertion_point).to_vec2(),
                     ),
                     max_inline_size: (mt.reference_rectangle_width != 0.0)
@@ -300,10 +319,27 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
             EntityType::Text(ref t) => {
                 // TODO: Handle second_alignment_point etc?
                 // TODO: Handle relative_x_scale_factor.
+
+                // TODO: Implement a shared parser for scanning formatting codes into styled text
+                //       and doing unicode substitution for special character codes.
+                let text = t
+                    .value
+                    .replace("%%c", "∅")
+                    .replace("%%d", "°")
+                    .replace("%%p", "±")
+                    .replace("%%C", "∅")
+                    .replace("%%D", "°")
+                    .replace("%%P", "±")
+                    .replace("%%%", "%")
+                    // TODO: implement toggle underline with styled text.
+                    .replace("%%u", "")
+                    // TODO: implement toggle overline with styled text.
+                    .replace("%%o", "");
+
                 #[allow(clippy::cast_possible_truncation, reason = "It doesn't matter")]
                 texts.push(FatText {
                     transform: Default::default(),
-                    text: t.value.clone().into(),
+                    text: text.into(),
                     style: styles.get(t.text_style_name.as_str()).map_or_else(
                         || StyleSet::new(t.text_height as f32),
                         |s| {
@@ -324,7 +360,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     ),
                     alignment: Default::default(),
                     insertion: DirectIsometry::new(
-                        t.rotation * (core::f64::consts::PI / 180.),
+                        t.rotation.to_radians(),
                         point_from_dxf_point(&t.location).to_vec2(),
                     ),
                     max_inline_size: None,
