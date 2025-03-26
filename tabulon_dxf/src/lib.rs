@@ -39,10 +39,12 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                         x: center.x,
                         y: center.y,
                     },
-                    radii: Vec2::new(radius, radius),
-                    start_angle,
-                    // FIXME: don't know if this is correct.
-                    sweep_angle: end_angle,
+                    radii: Vec2 {
+                        x: radius,
+                        y: radius,
+                    },
+                    start_angle: start_angle.to_radians(),
+                    sweep_angle: (end_angle - start_angle).rem_euclid(360.0).to_radians(),
                     x_rotation: 0.0,
                 }
                 .into(),

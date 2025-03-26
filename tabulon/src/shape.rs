@@ -93,8 +93,12 @@ impl AnyShape {
         impl_any_shape_generic_transform!(
             self,
             transform,
-            CircleSegment | Rect | RoundedRect,
-            Arc | BezPath | Circle | CubicBez | Ellipse | Line | PathSeg | QuadBez
+            // I ran into issues with the `Affine` multiplication implementation
+            // on `Arc` in this context, but it behaves correctly after it is
+            // converted to a `BezPath` before transforming.
+            // Can move this down to the direct impls if/when that is fixed.
+            Arc | CircleSegment | Rect | RoundedRect,
+            BezPath | Circle | CubicBez | Ellipse | Line | PathSeg | QuadBez
         )
     }
 
