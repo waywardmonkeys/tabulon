@@ -7,6 +7,7 @@
 use anyhow::Result;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::Instant;
 use vello::kurbo::{Affine, Point, Stroke, Vec2};
 use vello::peniko::color::palette;
 use vello::peniko::Color;
@@ -147,11 +148,15 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
         update_transform(&mut self.graphics, self.view_transform, self.view_scale);
         self.scene.reset();
+
+        let encode_started = Instant::now();
         self.tv_environment.add_render_layer_to_scene(
             &mut self.scene,
             &self.graphics,
             &self.render_layer,
         );
+        let encode_duration = Instant::now().saturating_duration_since(encode_started);
+        eprintln!("Initial projection/encode took {encode_duration:?}");
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -212,6 +217,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     const PICK_DIST: f64 = 2.828;
                     let sp = PICK_DIST * 1.0 / self.view_scale;
 
+                    let pick_started = Instant::now();
                     let pick = self
                         .bounds_index
                         .query(dp.x - sp, dp.y - sp, dp.x + sp, dp.y + sp)
@@ -228,7 +234,10 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
                     if self.pick != pick {
                         if let Some(i) = pick {
-                            println!("{:?} was close to cursor.", self.lines[i]);
+                            let pick_duration =
+                                Instant::now().saturating_duration_since(pick_started);
+                            eprintln!("{:?} was close to cursor.", self.lines[i]);
+                            eprintln!("Pick took {pick_duration:?}");
                         }
                         self.pick = pick;
                         reproject = true;
@@ -307,6 +316,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         }
 
         if reproject {
+            let reproject_started = Instant::now();
             update_transform(&mut self.graphics, self.view_transform, self.view_scale);
             self.scene.reset();
             self.tv_environment.add_render_layer_to_scene(
@@ -336,18 +346,25 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     .add_render_layer_to_scene(&mut self.scene, &gb, &rl);
             }
 
+            let reproject_duration = Instant::now().saturating_duration_since(reproject_started);
+            eprintln!("Reprojection/reencoding took {reproject_duration:?}");
+
             window.request_redraw();
         }
     }
 }
 
 fn main() -> Result<()> {
+    let drawing_load_started = Instant::now();
     let tabulon_dxf::TDDrawing { lines, texts } = tabulon_dxf::load_file_default_layers(
         std::env::args()
             .next_back()
             .expect("Please provide a path in the last argument."),
     )
     .expect("DXF file failed to load.");
+
+    let drawing_load_duration = Instant::now().saturating_duration_since(drawing_load_started);
+    eprintln!("Drawing took {drawing_load_duration:?} to load and translate.");
 
     let bounds_index = compute_bounds_index(&lines);
 
@@ -443,10 +460,14 @@ use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
 
 /// Compute an index of bounding boxes for shapes.
 fn compute_bounds_index(lines: &SmallVec<[AnyShape; 1]>) -> StaticAABB2DIndex<f64> {
+    let build_started = Instant::now();
     let mut builder = StaticAABB2DIndexBuilder::new(lines.len());
     for shape in lines {
         let bbox = shape.bounding_box();
         builder.add(bbox.min_x(), bbox.min_y(), bbox.max_x(), bbox.max_y());
     }
-    builder.build().unwrap()
+    let index = builder.build().unwrap();
+    let build_duration = Instant::now().saturating_duration_since(build_started);
+    eprintln!("Bounds index took {build_duration:?} to build.");
+    index
 }
