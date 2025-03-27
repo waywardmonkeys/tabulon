@@ -79,6 +79,9 @@ struct SimpleVelloApp<'s> {
     /// View scale of the drawing.
     view_scale: f64,
 
+    /// Defer reprojection until after redraw is completed.
+    defer_reprojection: bool,
+
     /// State of gesture processing (e.g. panning, zooming).
     gestures: GestureState,
 }
@@ -179,6 +182,8 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         };
 
         let mut reproject = false;
+        // Set if reprojection is requested as a result of a deferral.
+        let mut reproject_deferred = false;
 
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
@@ -206,13 +211,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     self.view_transform = self
                         .view_transform
                         .then_translate(-(self.gestures.cursor_pos - p));
-                    let mut scene = Scene::new();
-                    scene.append(
-                        &self.scene,
-                        Some(Affine::translate(-(self.gestures.cursor_pos - p))),
-                    );
-                    self.scene = scene;
-                    window.request_redraw();
+                    reproject = true;
                 } else {
                     const PICK_DIST: f64 = 2.828;
                     let sp = PICK_DIST * 1.0 / self.view_scale;
@@ -311,11 +310,21 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                 surface_texture.present();
 
                 device_handle.device.poll(wgpu::Maintain::Poll);
+
+                if self.defer_reprojection {
+                    reproject_deferred = true;
+                    self.defer_reprojection = false;
+                }
             }
             _ => {}
         }
 
-        if reproject {
+        if reproject || reproject_deferred {
+            if self.defer_reprojection {
+                return;
+            }
+            // direct requests for reprojection until after the next redraw is complete.
+            self.defer_reprojection = reproject;
             let reproject_started = Instant::now();
             update_transform(&mut self.graphics, self.view_transform, self.view_scale);
             self.scene.reset();
@@ -380,6 +389,7 @@ fn main() -> Result<()> {
         tv_environment: Default::default(),
         render_layer: Default::default(),
         view_transform: Default::default(),
+        defer_reprojection: Default::default(),
         view_scale: 1.0,
         gestures: Default::default(),
     };
