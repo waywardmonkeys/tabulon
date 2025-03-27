@@ -6,7 +6,9 @@
 use dxf::{entities::EntityType, Drawing, DxfResult};
 use tabulon::{
     peniko::{
-        kurbo::{Affine, Arc as KurboArc, BezPath, Circle, Line, PathEl, Point, Vec2},
+        kurbo::{
+            Affine, Arc as KurboArc, BezPath, Circle, Line, PathEl, Point, Vec2, DEFAULT_ACCURACY,
+        },
         Color,
     },
     shape::{AnyShape, SmallVec},
@@ -64,44 +66,66 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
             Some(c.into())
         }
         EntityType::LwPolyline(ref lwp) => {
-            // FIXME: LwPolyline supports variable width and arcs.
-            if lwp.vertices.len() >= 2 {
-                let mut bp = BezPath::new();
-                fn lwp_vertex_to_point(
-                    dxf::LwPolylineVertex { x, y, .. }: dxf::LwPolylineVertex,
-                ) -> Point {
-                    Point { x, y }
-                }
-                bp.push(PathEl::MoveTo(lwp_vertex_to_point(lwp.vertices[0])));
-                for v in lwp.vertices.iter().skip(1) {
-                    bp.push(PathEl::LineTo(lwp_vertex_to_point(*v)));
-                }
-                if lwp.is_closed() {
-                    bp.close_path();
-                }
-                Some(bp.into())
-            } else {
-                None
+            fn lwp_vertex_to_point(
+                dxf::LwPolylineVertex { x, y, .. }: dxf::LwPolylineVertex,
+            ) -> Point {
+                Point { x, y }
             }
+
+            if lwp.vertices.len() < 2 {
+                return None;
+            }
+
+            let mut bp = BezPath::new();
+            bp.push(PathEl::MoveTo(lwp_vertex_to_point(lwp.vertices[0])));
+
+            for w in lwp.vertices.windows(2) {
+                let current = &w[0];
+                let next = &w[1];
+                let start = lwp_vertex_to_point(*current);
+                let end = lwp_vertex_to_point(*next);
+
+                let bulge = current.bulge;
+                add_poly_segment(&mut bp, start, end, bulge);
+            }
+
+            if lwp.is_closed() {
+                bp.close_path();
+            }
+
+            Some(bp.into())
         }
         EntityType::Polyline(ref pl) => {
             use dxf::entities::Vertex;
             // FIXME: Polyline variable width and arcs, and a variety of other things.
             //        In some cases vertices might actually be indices?
-            let vertices: Vec<&Vertex> = pl.vertices().collect();
-            if vertices.len() >= 2 && !pl.is_polyface_mesh() && !pl.is_3d_polygon_mesh() {
-                let mut bp = BezPath::new();
-                bp.push(PathEl::MoveTo(point_from_dxf_point(&vertices[0].location)));
-                for v in vertices.iter().skip(1) {
-                    bp.push(PathEl::LineTo(point_from_dxf_point(&v.location)));
-                }
-                if pl.is_closed() {
-                    bp.close_path();
-                }
-                Some(bp.into())
-            } else {
-                None
+            if pl.is_polyface_mesh() || pl.is_3d_polygon_mesh() {
+                return None;
             }
+
+            let vertices: Vec<&Vertex> = pl.vertices().collect();
+            if vertices.len() < 2 {
+                return None;
+            }
+
+            let mut bp = BezPath::new();
+            bp.push(PathEl::MoveTo(point_from_dxf_point(&vertices[0].location)));
+
+            for w in vertices.windows(2) {
+                let current = &w[0];
+                let next = &w[1];
+                let start = point_from_dxf_point(&current.location);
+                let end = point_from_dxf_point(&next.location);
+
+                let bulge = current.bulge;
+                add_poly_segment(&mut bp, start, end, bulge);
+            }
+
+            if pl.is_closed() {
+                bp.close_path();
+            }
+
+            Some(bp.into())
         }
         _ => {
             // eprintln!(
@@ -111,6 +135,55 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
             None
         }
     }
+}
+
+/// Add a polyline segment to a `BezPath`, taking bulge into account.
+fn add_poly_segment(bp: &mut BezPath, start: Point, end: Point, bulge: f64) {
+    if bulge == 0.0 {
+        bp.push(PathEl::LineTo(end));
+        return;
+    }
+
+    let theta = 4.0 * bulge.atan();
+    if theta.abs() < 1e-6 {
+        bp.push(PathEl::LineTo(end));
+        return;
+    }
+
+    let v = end - start;
+    let d = v.hypot();
+    if d < 1e-10 {
+        // Points are too dang close.
+        bp.push(PathEl::LineTo(end));
+        return;
+    }
+
+    let r = d / (2.0 * (theta / 2.0).sin().abs());
+
+    let center = {
+        let s = bulge.signum();
+        let perp = Vec2 {
+            x: -s * v.y,
+            y: s * v.x,
+        };
+        let h = r * (theta / 2.0).cos();
+        let midpoint = (start.to_vec2() + end.to_vec2()) / 2.0;
+        (midpoint + (h / d) * perp).to_point()
+    };
+
+    let start_angle = (start - center.to_vec2()).to_vec2().atan2();
+
+    let arc = KurboArc {
+        center,
+        radii: Vec2 { x: r, y: r },
+        start_angle,
+        sweep_angle: theta,
+        x_rotation: 0.0,
+    };
+
+    arc.to_cubic_beziers(DEFAULT_ACCURACY, |p1, p2, p3| {
+        bp.push(PathEl::CurveTo(p1, p2, p3));
+    });
 }
 
 /// Make a [`Point`] from the x and y of a [`dxf::Point`].
