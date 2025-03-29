@@ -7,7 +7,7 @@
 use anyhow::Result;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use vello::kurbo::{Affine, Circle, Ellipse, Line, RoundedRect, Stroke};
+use vello::kurbo::{Circle, Ellipse, Line, RoundedRect, Stroke};
 use vello::peniko::color::palette;
 use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
@@ -196,7 +196,7 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
 /// Add shapes to a vello scene. This does not actually render the shapes, but adds them
 /// to the Scene data structure which represents a set of objects to draw.
 fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &mut Scene) {
-    use tabulon::shape::{FatPaint, FatShape, SmallVec};
+    use tabulon::shape::{FatPaint, FatShape};
     use tabulon::{graphics_bag::GraphicsBag, render_layer::RenderLayer};
 
     let mut rl = RenderLayer::default();
@@ -206,13 +206,13 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
     rl.push_with_bag(
         &mut gb,
         FatShape {
-            transform: Affine::IDENTITY,
+            transform: Default::default(),
             paint: FatPaint {
                 stroke: Stroke::new(6.0),
                 stroke_paint: Some(Color::new([0.9804, 0.702, 0.5294, 1.]).into()),
                 fill_paint: None,
             },
-            subshapes: SmallVec::from([RoundedRect::new(10.0, 10.0, 240.0, 240.0, 20.0).into()]),
+            subshapes: Arc::from([RoundedRect::new(10.0, 10.0, 240.0, 240.0, 20.0).into()]),
         },
     );
 
@@ -220,13 +220,13 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
     rl.push_with_bag(
         &mut gb,
         FatShape {
-            transform: Affine::IDENTITY,
+            transform: Default::default(),
             paint: FatPaint {
                 stroke: Default::default(),
                 stroke_paint: None,
                 fill_paint: Some(Color::new([0.9529, 0.5451, 0.6588, 1.]).into()),
             },
-            subshapes: SmallVec::from([Circle::new((420.0, 200.0), 120.0).into()]),
+            subshapes: Arc::from([Circle::new((420.0, 200.0), 120.0).into()]),
         },
     );
 
@@ -234,13 +234,13 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
     rl.push_with_bag(
         &mut gb,
         FatShape {
-            transform: Affine::IDENTITY,
+            transform: Default::default(),
             paint: FatPaint {
                 stroke: Default::default(),
                 stroke_paint: None,
                 fill_paint: Some(Color::new([0.7961, 0.651, 0.9686, 1.]).into()),
             },
-            subshapes: SmallVec::from([Ellipse::new((250.0, 420.0), (100.0, 160.0), -90.0).into()]),
+            subshapes: Arc::from([Ellipse::new((250.0, 420.0), (100.0, 160.0), -90.0).into()]),
         },
     );
 
@@ -248,13 +248,13 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
     rl.push_with_bag(
         &mut gb,
         FatShape {
-            transform: Affine::IDENTITY,
+            transform: Default::default(),
             paint: FatPaint {
                 stroke: Stroke::new(6.0),
                 stroke_paint: Some(Color::new([0.5373, 0.7059, 0.9804, 1.]).into()),
                 fill_paint: None,
             },
-            subshapes: SmallVec::from([Line::new((260.0, 20.0), (620.0, 100.0)).into()]),
+            subshapes: Arc::from([Line::new((260.0, 20.0), (620.0, 100.0)).into()]),
         },
     );
 

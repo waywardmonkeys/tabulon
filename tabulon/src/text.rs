@@ -7,15 +7,15 @@ use alloc::sync::Arc;
 
 use parley::{Alignment, StyleSet};
 use peniko::{
-    kurbo::{Affine, Size, Vec2},
+    kurbo::{Size, Vec2},
     Color,
 };
 
-use crate::DirectIsometry;
+use crate::{DirectIsometry, TransformHandle};
 
 /// Reference point where text is attached to an insertion point.
 #[repr(i32)]
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub enum AttachmentPoint {
     /// Top left corner.
     #[default]
@@ -66,10 +66,10 @@ impl AttachmentPoint {
 }
 
 /// Text item.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FatText {
     /// Primary transform.
-    pub transform: Affine,
+    pub transform: TransformHandle,
     /// Text content.
     pub text: Arc<str>,
     /// Styles for the text.

@@ -13,6 +13,11 @@ pub use smallvec::SmallVec;
 #[cfg(all(not(feature = "std"), not(test)))]
 use crate::floatfuncs::FloatFuncs;
 
+extern crate alloc;
+use alloc::sync;
+
+use crate::TransformHandle;
+
 /// Enumeration of Kurbo shapes supported in `FatShape`.
 #[derive(Debug, Clone)]
 pub enum AnyShape {
@@ -210,11 +215,11 @@ pub struct FatPaint {
 #[derive(Debug)]
 pub struct FatShape {
     /// Affine transform
-    pub transform: Affine,
+    pub transform: TransformHandle,
     /// Paint information
     pub paint: FatPaint,
     /// [`AnyShape`]s
-    pub subshapes: SmallVec<[AnyShape; 1]>,
+    pub subshapes: sync::Arc<[AnyShape]>,
 }
 
 impl FatShape {
@@ -223,80 +228,8 @@ impl FatShape {
         self.subshapes.get(1).map(|s| {
             self.subshapes
                 .iter()
-                .map(AnyShape::bounding_box)
+                .map(|x| x.bounding_box())
                 .fold(s.bounding_box(), |a, x| a.union(x))
         })
-    }
-
-    /// Pick subshapes for point.
-    ///
-    /// If `paint` has a `fill_paint`, then this filters shapes by [`AnyShape::contains`].
-    /// If there is no `fill_paint` but there is a `stroke`, then this is ordered by absolute distance to the edge of the shape.
-    ///// TODO: document which subshape types this is implemented for.
-    pub fn pick(&self, p: Point, limit: f64) -> SmallVec<[usize; 4]> {
-        let tp = self.transform.inverse() * p;
-        // FIXME: breaks for nonuniform transforms
-        let sq_limit = (self.transform.inverse() * Circle::new(Point::default(), limit))
-            .bounding_box()
-            .size()
-            .to_vec2()
-            .hypot2();
-        match self.paint {
-            FatPaint {
-                fill_paint: Some(_),
-                ..
-            } => self
-                .subshapes
-                .iter()
-                .enumerate()
-                .rev()
-                .filter_map(|(i, x)| x.contains(tp).then_some(i))
-                .collect(),
-            FatPaint {
-                stroke_paint: Some(_),
-                ..
-            } => {
-                extern crate alloc;
-                use alloc::collections::btree_set::BTreeSet;
-                use core::cmp::Ordering;
-                struct DistIndex {
-                    dist: f64,
-                    index: usize,
-                }
-                impl PartialEq for DistIndex {
-                    fn eq(&self, b: &Self) -> bool {
-                        self.index == b.index && self.dist == b.dist
-                    }
-                }
-                impl Eq for DistIndex {}
-                impl PartialOrd for DistIndex {
-                    fn partial_cmp(&self, b: &Self) -> Option<Ordering> {
-                        Some(self.cmp(b))
-                    }
-                }
-                impl Ord for DistIndex {
-                    fn cmp(&self, b: &Self) -> Ordering {
-                        let o = self.dist.total_cmp(&b.dist);
-                        if o.is_eq() {
-                            self.index.cmp(&b.index)
-                        } else {
-                            o
-                        }
-                    }
-                }
-                let picks: BTreeSet<DistIndex> = self
-                    .subshapes
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .filter_map(|(index, x)| {
-                        let dist = x.dist_sq(tp);
-                        (dist < sq_limit).then_some(DistIndex { dist, index })
-                    })
-                    .collect();
-                picks.iter().map(|x| x.index).collect()
-            }
-            _ => SmallVec::new(),
-        }
     }
 }

@@ -10,7 +10,7 @@ use tabulon::{
         kurbo::{Affine, Arc, BezPath, Circle, Line, PathEl, Point, Vec2, DEFAULT_ACCURACY},
         Color,
     },
-    shape::{AnyShape, SmallVec},
+    shape::AnyShape,
     text::{AttachmentPoint, FatText},
     DirectIsometry,
 };
@@ -18,10 +18,19 @@ use tabulon::{
 use parley::{Alignment, StyleSet};
 
 extern crate alloc;
-use alloc::collections::{btree_map::BTreeMap, btree_set::BTreeSet};
+use alloc::{
+    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    sync, vec,
+};
 
 #[cfg(feature = "std")]
 use std::path::Path;
+
+use core::num::NonZeroU64;
+
+/// A valid handle for an [`Entity`](dxf::entities::Entity) present in the drawing.
+#[derive(Debug, Clone, Copy)]
+pub struct EntityHandle(pub(crate) NonZeroU64);
 
 /// Convert entity to lines
 pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
@@ -191,13 +200,47 @@ pub fn point_from_dxf_point(p: &dxf::Point) -> Point {
     Point { x, y: -y }
 }
 
+/// Provide information about a drawing after loading it.
+#[allow(
+    missing_debug_implementations,
+    reason = "Not particularly useful, and members don't implement Debug."
+)]
+pub struct DrawingInfo {
+    drawing: Drawing,
+}
+
+impl DrawingInfo {
+    pub(crate) fn new(drawing: Drawing) -> Self {
+        Self { drawing }
+    }
+
+    /// Get an entity in the drawing.
+    pub fn get_entity(&self, eh: EntityHandle) -> &dxf::entities::Entity {
+        let dxf::DrawingItem::Entity(e) = self
+            .drawing
+            .item_by_handle(dxf::Handle(eh.0.get()))
+            .unwrap()
+        else {
+            unreachable!();
+        };
+        e
+    }
+}
+
 /// Tabulon data for the drawing.
-#[derive(Debug)]
+#[allow(
+    missing_debug_implementations,
+    reason = "Not particularly useful, and members don't implement Debug."
+)]
 pub struct TDDrawing {
     /// Collection of shapes for drawing lines.
-    pub lines: SmallVec<[AnyShape; 1]>,
+    pub lines: sync::Arc<[AnyShape]>,
+    /// Collection of entity handles for drawing lines.
+    pub line_handles: sync::Arc<[EntityHandle]>,
     /// Collection of text descriptions (from TEXT/MTEXT entities).
-    pub texts: SmallVec<[FatText; 1]>,
+    pub texts: Vec<FatText>,
+    /// Drawing information object.
+    pub info: DrawingInfo,
 }
 
 use parley::{FontStyle, FontWeight, FontWidth, GenericFamily, StyleProperty};
@@ -212,8 +255,9 @@ fn style_size_is_zero(s: &StyleSet<Option<Color>>) -> bool {
 /// Load a DXF from a path, and convert the entities in its enabled layers to Tabulon [`AnyShape`]s.
 #[cfg(feature = "std")]
 pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> {
-    let mut lines = SmallVec::<[AnyShape; 1]>::new();
-    let mut texts = SmallVec::<[FatText; 1]>::new();
+    let mut lines = vec![];
+    let mut line_handles = vec![];
+    let mut texts = vec![];
 
     let drawing = Drawing::load_file(path)?;
 
@@ -224,7 +268,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
 
     // FIXME: It's conceivable that a BLOCK may have an INSERT so
     //        we should figure out something sane to do with that.
-    let blocks: BTreeMap<&str, SmallVec<[AnyShape; 4]>> = drawing
+    let blocks: BTreeMap<&str, Vec<AnyShape>> = drawing
         .blocks()
         .map(|b| {
             (
@@ -301,7 +345,9 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         .collect();
 
     for e in drawing.entities() {
-        if !(e.common.layer.is_empty() || visible_layers.contains(e.common.layer.as_str())) {
+        if !e.common.is_visible
+            || !(e.common.layer.is_empty() || visible_layers.contains(e.common.layer.as_str()))
+        {
             continue;
         }
         match e.specific {
@@ -320,6 +366,9 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                                 .then_rotate(-ins.rotation.to_radians())
                                 .then_translate(location.to_vec2());
                             for s in b {
+                                line_handles.push(EntityHandle(
+                                    NonZeroU64::new(e.common.handle.0).unwrap(),
+                                ));
                                 lines.push(s.transform(transform));
                             }
                         }
@@ -471,13 +520,19 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
             }
             _ => {
                 if let Some(s) = shape_from_entity(e) {
+                    line_handles.push(EntityHandle(NonZeroU64::new(e.common.handle.0).unwrap()));
                     lines.push(s);
                 }
             }
         }
     }
 
-    Ok(TDDrawing { lines, texts })
+    Ok(TDDrawing {
+        lines: sync::Arc::from(lines.as_slice()),
+        line_handles: sync::Arc::from(line_handles.as_slice()),
+        texts,
+        info: DrawingInfo::new(drawing),
+    })
 }
 
 /// Convert a [`dxf::enums::AttachmentPoint`] to a [`tabulon::text::AttachmentPoint`].

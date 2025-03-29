@@ -36,8 +36,9 @@ fn ensure_libm_dependency_used() -> f32 {
 
 /// Collection of graphics items.
 pub mod graphics_bag;
+pub use graphics_bag::*;
 
-/// Render layer which lists graphics items in a [`GraphicsBag`](graphics_bag::GraphicsBag) for rendering.
+/// Render layer which lists graphics items in a [`GraphicsBag`] for rendering.
 pub mod render_layer;
 
 /// Shapes for rendering and event dispatch.
