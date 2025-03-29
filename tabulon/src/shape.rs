@@ -13,6 +13,9 @@ pub use smallvec::SmallVec;
 #[cfg(all(not(feature = "std"), not(test)))]
 use crate::floatfuncs::FloatFuncs;
 
+extern crate alloc;
+use alloc::sync;
+
 /// Enumeration of Kurbo shapes supported in `FatShape`.
 #[derive(Debug, Clone)]
 pub enum AnyShape {
@@ -214,7 +217,7 @@ pub struct FatShape {
     /// Paint information
     pub paint: FatPaint,
     /// [`AnyShape`]s
-    pub subshapes: SmallVec<[AnyShape; 1]>,
+    pub subshapes: SmallVec<[sync::Arc<AnyShape>; 1]>,
 }
 
 impl FatShape {
@@ -223,7 +226,7 @@ impl FatShape {
         self.subshapes.get(1).map(|s| {
             self.subshapes
                 .iter()
-                .map(AnyShape::bounding_box)
+                .map(|x| x.bounding_box())
                 .fold(s.bounding_box(), |a, x| a.union(x))
         })
     }

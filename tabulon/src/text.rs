@@ -15,7 +15,7 @@ use crate::DirectIsometry;
 
 /// Reference point where text is attached to an insertion point.
 #[repr(i32)]
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub enum AttachmentPoint {
     /// Top left corner.
     #[default]
@@ -66,7 +66,7 @@ impl AttachmentPoint {
 }
 
 /// Text item.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FatText {
     /// Primary transform.
     pub transform: Affine,

@@ -21,6 +21,8 @@ use winit::window::Window;
 
 use vello::wgpu;
 
+use tabulon_dxf::TDDrawing;
+
 extern crate alloc;
 
 enum RenderState<'s> {
@@ -56,11 +58,11 @@ struct SimpleVelloApp<'s> {
     /// drawn (with paths, fills, images, text, etc) which is then passed to a renderer for rendering.
     scene: Scene,
 
-    /// Collection of shapes to be stroked with the default line style.
-    lines: SmallVec<[AnyShape; 1]>,
+    /// `tabulon_dxf` drawing.
+    drawing: TDDrawing,
 
     /// Index of bounding boxes for hit testing
-    bounds_index: StaticAABB2DIndex<f64>,
+    picking_index: StaticAABB2DIndex<f64>,
 
     /// Which shape is closest to the cursor?
     pick: Option<usize>,
@@ -135,9 +137,10 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         };
 
         let bounds = self
+            .drawing
             .lines
             .iter()
-            .map(AnyShape::bounding_box)
+            .map(|x| x.1.bounding_box())
             .fold(vello::kurbo::Rect::default(), |a, x| a.union(x));
 
         self.view_scale = (size.height as f64 / bounds.size().height)
@@ -218,12 +221,14 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
                     let pick_started = Instant::now();
                     let pick = self
-                        .bounds_index
+                        .picking_index
                         .query(dp.x - sp, dp.y - sp, dp.x + sp, dp.y + sp)
                         .iter()
-                        .filter(|i| self.lines[**i].dist_sq(dp) < (PICK_DIST * PICK_DIST))
+                        .filter(|i| self.drawing.lines[**i].1.dist_sq(dp) < (PICK_DIST * PICK_DIST))
                         .reduce(|a, b| {
-                            if self.lines[*b].dist_sq(dp) < self.lines[*a].dist_sq(dp) {
+                            if self.drawing.lines[*b].1.dist_sq(dp)
+                                < self.drawing.lines[*a].1.dist_sq(dp)
+                            {
                                 b
                             } else {
                                 a
@@ -235,7 +240,13 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                         if let Some(i) = pick {
                             let pick_duration =
                                 Instant::now().saturating_duration_since(pick_started);
-                            eprintln!("{:?} was close to cursor.", self.lines[i]);
+                            eprintln!(
+                                "{:#?}",
+                                self.drawing
+                                    .info
+                                    .get_entity(self.drawing.lines[i].0)
+                                    .specific
+                            );
                             eprintln!("Pick took {pick_duration:?}");
                         }
                         self.pick = pick;
@@ -347,7 +358,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                             stroke_paint: Some(palette::css::GOLDENROD.into()),
                             fill_paint: None,
                         },
-                        subshapes: SmallVec::from([self.lines[i].clone()]),
+                        subshapes: SmallVec::from([self.drawing.lines[i].1.clone()]),
                     },
                 );
 
@@ -365,7 +376,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
 fn main() -> Result<()> {
     let drawing_load_started = Instant::now();
-    let tabulon_dxf::TDDrawing { lines, texts } = tabulon_dxf::load_file_default_layers(
+    let drawing = tabulon_dxf::load_file_default_layers(
         std::env::args()
             .next_back()
             .expect("Please provide a path in the last argument."),
@@ -375,27 +386,13 @@ fn main() -> Result<()> {
     let drawing_load_duration = Instant::now().saturating_duration_since(drawing_load_started);
     eprintln!("Drawing took {drawing_load_duration:?} to load and translate.");
 
-    let bounds_index = compute_bounds_index(&lines);
+    let picking_index = compute_bounds_index(drawing.lines.iter().map(|x| x.1.clone()));
 
-    let mut app = SimpleVelloApp {
-        context: RenderContext::new(),
-        renderers: vec![],
-        state: RenderState::Suspended(None),
-        scene: Scene::new(),
-        lines,
-        bounds_index,
-        pick: None,
-        graphics: Default::default(),
-        tv_environment: Default::default(),
-        render_layer: Default::default(),
-        view_transform: Default::default(),
-        defer_reprojection: Default::default(),
-        view_scale: 1.0,
-        gestures: Default::default(),
-    };
+    let mut graphics = GraphicsBag::default();
+    let mut render_layer = RenderLayer::default();
 
-    app.render_layer.push_with_bag(
-        &mut app.graphics,
+    render_layer.push_with_bag(
+        &mut graphics,
         FatShape {
             transform: Default::default(),
             paint: FatPaint {
@@ -403,13 +400,30 @@ fn main() -> Result<()> {
                 stroke_paint: Some(Color::WHITE.into()),
                 fill_paint: None,
             },
-            subshapes: app.lines.clone(),
+            subshapes: drawing.lines.iter().map(|x| x.1.clone()).collect(),
         },
     );
 
-    for text in texts {
-        app.render_layer.push_with_bag(&mut app.graphics, text);
+    for text in drawing.texts.clone() {
+        render_layer.push_with_bag(&mut graphics, text);
     }
+
+    let mut app = SimpleVelloApp {
+        context: RenderContext::new(),
+        renderers: vec![],
+        state: RenderState::Suspended(None),
+        scene: Scene::new(),
+        drawing,
+        picking_index,
+        pick: None,
+        graphics,
+        tv_environment: Default::default(),
+        render_layer,
+        view_transform: Default::default(),
+        defer_reprojection: Default::default(),
+        view_scale: 1.0,
+        gestures: Default::default(),
+    };
 
     let event_loop = EventLoop::new()?;
     event_loop
@@ -469,8 +483,9 @@ fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
 
 /// Compute an index of bounding boxes for shapes.
-fn compute_bounds_index(lines: &SmallVec<[AnyShape; 1]>) -> StaticAABB2DIndex<f64> {
+fn compute_bounds_index(lines: impl IntoIterator<Item = Arc<AnyShape>>) -> StaticAABB2DIndex<f64> {
     let build_started = Instant::now();
+    let lines: Vec<Arc<AnyShape>> = lines.into_iter().collect();
     let mut builder = StaticAABB2DIndexBuilder::new(lines.len());
     for shape in lines {
         let bbox = shape.bounding_box();

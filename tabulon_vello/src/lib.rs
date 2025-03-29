@@ -51,7 +51,7 @@ impl Environment {
                     fill_paint,
                 } = $paint;
 
-                match $subshape {
+                match &**$subshape {
                     $(AnyShape::$name(x) =>  {
                         if let Some(fill_paint) = fill_paint {
                             scene.fill(NonZero, *$transform, fill_paint, None, &x);

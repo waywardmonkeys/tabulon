@@ -212,7 +212,9 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
                 stroke_paint: Some(Color::new([0.9804, 0.702, 0.5294, 1.]).into()),
                 fill_paint: None,
             },
-            subshapes: SmallVec::from([RoundedRect::new(10.0, 10.0, 240.0, 240.0, 20.0).into()]),
+            subshapes: SmallVec::from([Arc::new(
+                RoundedRect::new(10.0, 10.0, 240.0, 240.0, 20.0).into(),
+            )]),
         },
     );
 
@@ -226,7 +228,7 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
                 stroke_paint: None,
                 fill_paint: Some(Color::new([0.9529, 0.5451, 0.6588, 1.]).into()),
             },
-            subshapes: SmallVec::from([Circle::new((420.0, 200.0), 120.0).into()]),
+            subshapes: SmallVec::from([Arc::new(Circle::new((420.0, 200.0), 120.0).into())]),
         },
     );
 
@@ -240,7 +242,9 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
                 stroke_paint: None,
                 fill_paint: Some(Color::new([0.7961, 0.651, 0.9686, 1.]).into()),
             },
-            subshapes: SmallVec::from([Ellipse::new((250.0, 420.0), (100.0, 160.0), -90.0).into()]),
+            subshapes: SmallVec::from([Arc::new(
+                Ellipse::new((250.0, 420.0), (100.0, 160.0), -90.0).into(),
+            )]),
         },
     );
 
@@ -254,7 +258,7 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
                 stroke_paint: Some(Color::new([0.5373, 0.7059, 0.9804, 1.]).into()),
                 fill_paint: None,
             },
-            subshapes: SmallVec::from([Line::new((260.0, 20.0), (620.0, 100.0)).into()]),
+            subshapes: SmallVec::from([Arc::new(Line::new((260.0, 20.0), (620.0, 100.0)).into())]),
         },
     );
 
