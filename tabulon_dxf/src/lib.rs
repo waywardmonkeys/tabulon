@@ -4,11 +4,10 @@
 //! DXF loader for Tabulon
 
 use dxf::{entities::EntityType, Drawing, DxfResult};
+
 use tabulon::{
     peniko::{
-        kurbo::{
-            Affine, Arc as KurboArc, BezPath, Circle, Line, PathEl, Point, Vec2, DEFAULT_ACCURACY,
-        },
+        kurbo::{Affine, Arc, BezPath, Circle, Line, PathEl, Point, Vec2, DEFAULT_ACCURACY},
         Color,
     },
     shape::{AnyShape, SmallVec},
@@ -36,17 +35,15 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                 ..
             } = a.clone();
             Some(
-                KurboArc {
-                    center: Point {
-                        x: center.x,
-                        y: center.y,
-                    },
+                Arc {
+                    center: point_from_dxf_point(&center),
                     radii: Vec2 {
                         x: radius,
                         y: radius,
                     },
-                    start_angle: start_angle.to_radians(),
-                    sweep_angle: (end_angle - start_angle).rem_euclid(360.0).to_radians(),
+                    // DXF is y-up, so these are originally counterclockwise.
+                    start_angle: -start_angle.to_radians(),
+                    sweep_angle: -(end_angle - start_angle).rem_euclid(360.0).to_radians(),
                     x_rotation: 0.0,
                 }
                 .into(),
@@ -69,7 +66,7 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
             fn lwp_vertex_to_point(
                 dxf::LwPolylineVertex { x, y, .. }: dxf::LwPolylineVertex,
             ) -> Point {
-                Point { x, y }
+                Point { x, y: -y }
             }
 
             if lwp.vertices.len() < 2 {
@@ -85,7 +82,8 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                 let start = lwp_vertex_to_point(*current);
                 let end = lwp_vertex_to_point(*next);
 
-                let bulge = current.bulge;
+                // Bulge needs reversed because DXF is y-up
+                let bulge = -current.bulge;
                 add_poly_segment(&mut bp, start, end, bulge);
             }
 
@@ -117,7 +115,8 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                 let start = point_from_dxf_point(&current.location);
                 let end = point_from_dxf_point(&next.location);
 
-                let bulge = current.bulge;
+                // Bulge needs reversed because DXF is y-up
+                let bulge = -current.bulge;
                 add_poly_segment(&mut bp, start, end, bulge);
             }
 
@@ -173,7 +172,7 @@ fn add_poly_segment(bp: &mut BezPath, start: Point, end: Point, bulge: f64) {
 
     let start_angle = (start - center.to_vec2()).to_vec2().atan2();
 
-    let arc = KurboArc {
+    let arc = Arc {
         center,
         radii: Vec2 { x: r, y: r },
         start_angle,
@@ -189,7 +188,7 @@ fn add_poly_segment(bp: &mut BezPath, start: Point, end: Point, bulge: f64) {
 /// Make a [`Point`] from the x and y of a [`dxf::Point`].
 pub fn point_from_dxf_point(p: &dxf::Point) -> Point {
     let dxf::Point { x, y, .. } = *p;
-    Point { x, y }
+    Point { x, y: -y }
 }
 
 /// Tabulon data for the drawing.
@@ -318,7 +317,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                                     j as f64 * ins.column_spacing,
                                     i as f64 * ins.row_spacing,
                                 ))
-                                .then_rotate(ins.rotation * (core::f64::consts::PI / 180.))
+                                .then_rotate(-ins.rotation.to_radians())
                                 .then_translate(location.to_vec2());
                             for s in b {
                                 lines.push(s.transform(transform));
@@ -381,7 +380,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     ),
                     alignment: Default::default(),
                     insertion: DirectIsometry::new(
-                        mt.rotation_angle.to_radians(),
+                        -mt.rotation_angle.to_radians(),
                         point_from_dxf_point(&mt.insertion_point).to_vec2(),
                     ),
                     max_inline_size: (mt.reference_rectangle_width != 0.0)
@@ -433,7 +432,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     ),
                     alignment: Default::default(),
                     insertion: DirectIsometry::new(
-                        t.rotation.to_radians(),
+                        -t.rotation.to_radians(),
                         point_from_dxf_point(&t.location).to_vec2(),
                     ),
                     max_inline_size: None,
