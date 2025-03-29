@@ -107,7 +107,7 @@ impl Environment {
                         layout.break_all_lines(*max_inline_size);
                         layout.align(*max_inline_size, *alignment, Default::default());
                         let layout_size = Size {
-                            width: layout.width() as f64,
+                            width: max_inline_size.unwrap_or(layout.width()) as f64,
                             height: layout.height() as f64,
                         };
 

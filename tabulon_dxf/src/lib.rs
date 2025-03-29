@@ -15,7 +15,7 @@ use tabulon::{
     DirectIsometry,
 };
 
-use parley::StyleSet;
+use parley::{Alignment, StyleSet};
 
 extern crate alloc;
 use alloc::collections::{btree_map::BTreeMap, btree_set::BTreeSet};
@@ -367,6 +367,31 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     y: -mt.x_axis_direction.y,
                 }
                 .atan2();
+
+                let attachment_point = dxf_attachment_point_to_tabulon(mt.attachment_point);
+
+                // In DXF, the text alignment is also decided by the attachment point.
+                let alignment = {
+                    use Alignment::*;
+                    use AttachmentPoint::*;
+                    match attachment_point {
+                        TopCenter | MiddleCenter | BottomCenter => Middle,
+                        TopLeft | MiddleLeft | BottomLeft => Left,
+                        TopRight | MiddleRight | BottomRight => Right,
+                    }
+                };
+
+                let max_inline_size = if alignment == Alignment::Middle {
+                    None
+                } else {
+                    match mt.column_type {
+                        0 => (mt.reference_rectangle_width != 0.0)
+                            .then_some(mt.reference_rectangle_width as f32),
+                        1 => (mt.column_width != 0.0).then_some(mt.column_width as f32),
+                        _ => None,
+                    }
+                };
+
                 texts.push(FatText {
                     transform: Default::default(),
                     text: nt.into(),
@@ -383,15 +408,14 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                             }
                         },
                     ),
-                    alignment: Default::default(),
+                    alignment,
                     insertion: DirectIsometry::new(
                         // As far as I'm aware, x_axis_direction and rotation are exclusive.
                         -mt.rotation_angle.to_radians() + x_angle,
                         point_from_dxf_point(&mt.insertion_point).to_vec2(),
                     ),
-                    max_inline_size: (mt.reference_rectangle_width != 0.0)
-                        .then_some(mt.reference_rectangle_width as f32),
-                    attachment_point: dxf_attachment_point_to_tabulon(mt.attachment_point),
+                    max_inline_size,
+                    attachment_point,
                 });
             }
             EntityType::Text(ref t) => {
