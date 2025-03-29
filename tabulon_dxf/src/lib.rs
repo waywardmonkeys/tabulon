@@ -362,6 +362,11 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     .replace("\\A1;", "")
                     .replace("\\A0;", "");
 
+                let x_angle = Vec2 {
+                    x: mt.x_axis_direction.x,
+                    y: -mt.x_axis_direction.y,
+                }
+                .atan2();
                 texts.push(FatText {
                     transform: Default::default(),
                     text: nt.into(),
@@ -380,7 +385,8 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     ),
                     alignment: Default::default(),
                     insertion: DirectIsometry::new(
-                        -mt.rotation_angle.to_radians(),
+                        // As far as I'm aware, x_axis_direction and rotation are exclusive.
+                        -mt.rotation_angle.to_radians() + x_angle,
                         point_from_dxf_point(&mt.insertion_point).to_vec2(),
                     ),
                     max_inline_size: (mt.reference_rectangle_width != 0.0)
