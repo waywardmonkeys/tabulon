@@ -8,6 +8,7 @@ use anyhow::Result;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing_subscriber::prelude::*;
 use vello::kurbo::{Affine, Point, Stroke, Vec2};
 use vello::peniko::color::palette;
 use vello::peniko::Color;
@@ -364,6 +365,15 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 }
 
 fn main() -> Result<()> {
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing::level_filters::LevelFilter::WARN.into())
+                .from_env_lossy(),
+        );
+    subscriber.init();
+
     let drawing_load_started = Instant::now();
     let tabulon_dxf::TDDrawing { lines, texts } = tabulon_dxf::load_file_default_layers(
         std::env::args()
