@@ -29,7 +29,7 @@ use std::path::Path;
 use core::num::NonZeroU64;
 
 /// A valid handle for an [`Entity`](dxf::entities::Entity) present in the drawing.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntityHandle(pub(crate) NonZeroU64);
 
 /// Convert entity to lines
