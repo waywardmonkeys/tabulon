@@ -36,6 +36,11 @@ pub struct EntityHandle(pub(crate) NonZeroU64);
 pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
     match e.specific {
         EntityType::Arc(ref a) => {
+            // FIXME: currently only support viewing from +Z.
+            if a.normal.z != 1.0 {
+                return None;
+            }
+
             let dxf::entities::Arc {
                 center,
                 radius,
@@ -59,11 +64,21 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
             )
         }
         EntityType::Line(ref line) => {
+            // FIXME: currently only support viewing from +Z.
+            if line.extrusion_direction.z != 1.0 {
+                return None;
+            }
+
             let p0 = point_from_dxf_point(&line.p1);
             let p1 = point_from_dxf_point(&line.p2);
             Some(Line { p0, p1 }.into())
         }
         EntityType::Circle(ref circle) => {
+            // FIXME: currently only support viewing from +Z.
+            if circle.normal.z != 1.0 {
+                return None;
+            }
+
             let center = point_from_dxf_point(&circle.center);
             let c = Circle {
                 center,
@@ -72,6 +87,11 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
             Some(c.into())
         }
         EntityType::LwPolyline(ref lwp) => {
+            // FIXME: currently only support viewing from +Z.
+            if lwp.extrusion_direction.z != 1.0 {
+                return None;
+            }
+
             fn lwp_vertex_to_point(
                 dxf::LwPolylineVertex { x, y, .. }: dxf::LwPolylineVertex,
             ) -> Point {
@@ -103,6 +123,11 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
             Some(bp.into())
         }
         EntityType::Polyline(ref pl) => {
+            // FIXME: currently only support viewing from +Z.
+            if pl.normal.z != 1.0 {
+                return None;
+            }
+
             use dxf::entities::Vertex;
             // FIXME: Polyline variable width and arcs, and a variety of other things.
             //        In some cases vertices might actually be indices?
@@ -352,6 +377,11 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         }
         match e.specific {
             EntityType::Insert(ref ins) => {
+                // FIXME: currently only support viewing from +Z.
+                if ins.extrusion_direction.z != 1.0 {
+                    continue;
+                }
+
                 if let Some(b) = blocks.get(ins.name.as_str()) {
                     let base_transform =
                         Affine::scale_non_uniform(ins.x_scale_factor, ins.y_scale_factor);
@@ -377,6 +407,11 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
             }
             #[allow(clippy::cast_possible_truncation, reason = "It doesn't matter")]
             EntityType::MText(ref mt) => {
+                // FIXME: currently only support viewing from +Z.
+                if mt.extrusion_direction.z != 1.0 {
+                    continue;
+                }
+
                 // TODO: Parse MTEXT encoded characters to Unicode equivalents.
                 // TODO: Set up background fills.
                 // TODO: Handle inline style changes?
@@ -468,6 +503,11 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 });
             }
             EntityType::Text(ref t) => {
+                // FIXME: currently only support viewing from +Z.
+                if t.normal.z != 1.0 {
+                    continue;
+                }
+
                 // TODO: Handle second_alignment_point etc?
                 // TODO: Handle relative_x_scale_factor.
 
