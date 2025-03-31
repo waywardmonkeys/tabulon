@@ -215,7 +215,7 @@ fn add_poly_segment(bp: &mut BezPath, start: Point, end: Point, bulge: f64) {
     };
 
     arc.to_cubic_beziers(DEFAULT_ACCURACY, |p1, p2, p3| {
-        bp.push(PathEl::CurveTo(p1, p2, p3));
+        bp.curve_to(p1, p2, p3);
     });
 }
 
