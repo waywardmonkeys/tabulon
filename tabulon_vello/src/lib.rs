@@ -73,6 +73,7 @@ impl Environment {
                         subshapes,
                     }) => {
                         let transform = graphics.get_transform(*transform);
+                        let paint = graphics.get_paint(*paint);
 
                         for subshape in subshapes.as_ref() {
                             render_anyshape_match!(

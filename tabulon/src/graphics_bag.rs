@@ -6,7 +6,10 @@ use alloc::{vec, vec::Vec};
 
 use core::num::NonZeroU32;
 
-use crate::{shape::FatShape, text::FatText};
+use crate::{
+    shape::{FatPaint, FatShape},
+    text::FatText,
+};
 
 use peniko::kurbo::Affine;
 
@@ -17,6 +20,16 @@ pub struct TransformHandle(Option<NonZeroU32>);
 /// A handle for a `GraphicsItem` in a `GraphicsBag`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ItemHandle(u32);
+
+/// A handle for a `FatPaint` in a `GraphicsBag`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PaintHandle(u32);
+
+impl From<PaintHandle> for usize {
+    fn from(h: PaintHandle) -> Self {
+        h.0 as Self
+    }
+}
 
 impl From<TransformHandle> for usize {
     fn from(h: TransformHandle) -> Self {
@@ -54,6 +67,8 @@ pub struct GraphicsBag {
     final_transforms: Vec<Affine>,
     /// Records that
     managed_transforms: Vec<ManagedTransform>,
+    /// `FatPaint`s registered with this bag.
+    palette: Vec<FatPaint>,
 }
 
 impl Default for GraphicsBag {
@@ -63,6 +78,7 @@ impl Default for GraphicsBag {
             final_transforms: vec![Default::default()],
             managed_transforms: vec![Default::default()],
             items: Default::default(),
+            palette: Default::default(),
         }
     }
 }
@@ -82,6 +98,30 @@ impl GraphicsBag {
     #[must_use]
     pub fn get(&self, idx: ItemHandle) -> Option<&GraphicsItem> {
         self.items.get(idx.0 as usize)
+    }
+
+    /// Register a paint.
+    ///
+    /// Attach the returned `PaintHandle` to a `GraphicsItem`.
+    #[must_use]
+    pub fn register_paint(&mut self, paint: FatPaint) -> PaintHandle {
+        let n = self.palette.len();
+        if n >= u32::MAX as usize {
+            panic!("GraphicsBag has too many paints.");
+        }
+        self.palette.push(paint);
+        PaintHandle(n.try_into().unwrap())
+    }
+
+    /// Get a paint.
+    #[must_use]
+    pub fn get_paint(&self, handle: PaintHandle) -> &FatPaint {
+        self.palette.get(usize::from(handle)).unwrap()
+    }
+
+    /// Update a paint.
+    pub fn update_paint(&mut self, handle: PaintHandle, paint: FatPaint) {
+        self.palette[handle.0 as usize] = paint;
     }
 
     /// Register a transform.
