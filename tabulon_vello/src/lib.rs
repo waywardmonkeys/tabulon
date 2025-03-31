@@ -54,10 +54,10 @@ impl Environment {
                 match $subshape {
                     $(AnyShape::$name(x) =>  {
                         if let Some(fill_paint) = fill_paint {
-                            scene.fill(NonZero, *$transform, fill_paint, None, &x);
+                            scene.fill(NonZero, $transform, fill_paint, None, &x);
                         }
                         if let Some(stroke_paint) = stroke_paint {
-                            scene.stroke(&stroke, *$transform, stroke_paint, None, &x);
+                            scene.stroke(&stroke, $transform, stroke_paint, None, &x);
                         }
                     }),*
                 }
@@ -72,7 +72,9 @@ impl Environment {
                         transform,
                         subshapes,
                     }) => {
-                        for subshape in subshapes {
+                        let transform = graphics.get_transform(*transform);
+
+                        for subshape in subshapes.as_ref() {
                             render_anyshape_match!(
                                 paint,
                                 transform,
@@ -99,6 +101,8 @@ impl Environment {
                         insertion,
                         attachment_point,
                     }) => {
+                        let transform = graphics.get_transform(*transform);
+
                         let mut builder = layout_cx.ranged_builder(font_cx, text, 1.0);
                         for prop in style.inner().values() {
                             builder.push_default(prop.to_owned());
@@ -130,7 +134,7 @@ impl Environment {
                                     // TODO: Color will come from styled text.
                                     .brush(Color::WHITE)
                                     .hint(false)
-                                    .transform(*transform * placement_transform)
+                                    .transform(transform * placement_transform)
                                     .glyph_transform(synthesis.skew().map(|angle| {
                                         Affine::skew(angle.to_radians().tan() as f64, 0.0)
                                     }))
