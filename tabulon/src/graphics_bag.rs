@@ -14,15 +14,15 @@ use crate::{
 use peniko::kurbo::Affine;
 
 /// A handle for a transform.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct TransformHandle(Option<NonZeroU32>);
 
 /// A handle for a `GraphicsItem` in a `GraphicsBag`.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct ItemHandle(u32);
 
 /// A handle for a `FatPaint` in a `GraphicsBag`.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct PaintHandle(u32);
 
 impl From<PaintHandle> for usize {

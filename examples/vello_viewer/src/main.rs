@@ -27,10 +27,12 @@ use tabulon_dxf::{EntityHandle, TDDrawing};
 use tabulon::{
     render_layer::RenderLayer,
     shape::{AnyShape, FatPaint, FatShape},
-    GraphicsBag,
+    GraphicsBag, GraphicsItem,
 };
 
 extern crate alloc;
+
+use alloc::collections::BTreeSet;
 
 enum RenderState<'s> {
     /// `RenderSurface` and `Window` for active rendering.
@@ -68,20 +70,13 @@ struct SimpleVelloApp<'s> {
     /// `tabulon_dxf` drawing.
     drawing: TDDrawing,
 
-    /// Index of bounding boxes for hit testing
-    picking_index: StaticAABB2DIndex<f64>,
-
+    /// Index of bounding boxes for hit testing.
+    picking_index: EntityIndex,
     /// Which shape is closest to the cursor?
     pick: Option<EntityHandle>,
 
-    /// Graphics bag.
-    graphics: GraphicsBag,
-
     /// Tabulon Vello environment.
     tv_environment: tabulon_vello::Environment,
-
-    /// Active render layer.
-    render_layer: RenderLayer,
 
     /// View transform of the drawing.
     view_transform: Affine,
@@ -145,8 +140,12 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
         let bounds = self
             .drawing
-            .lines
+            .item_entity_map
             .iter()
+            .flat_map(|(k, _v)| match self.drawing.graphics.get(*k) {
+                Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) => subshapes.iter(),
+                _ => [].iter(),
+            })
             .fold(vello::kurbo::Rect::default(), |a, x| {
                 a.union(x.bounding_box())
             });
@@ -160,14 +159,18 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         })
         .then_scale(self.view_scale);
 
-        update_transform(&mut self.graphics, self.view_transform, self.view_scale);
+        update_transform(
+            &mut self.drawing.graphics,
+            self.view_transform,
+            self.view_scale,
+        );
         self.scene.reset();
 
         let encode_started = Instant::now();
         self.tv_environment.add_render_layer_to_scene(
             &mut self.scene,
-            &self.graphics,
-            &self.render_layer,
+            &self.drawing.graphics,
+            &self.drawing.render_layer,
         );
         let encode_duration = Instant::now().saturating_duration_since(encode_started);
         eprintln!("Initial projection/encode took {encode_duration:?}");
@@ -225,24 +228,11 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     reproject = true;
                 } else {
                     const PICK_DIST: f64 = 4.;
-                    let sp = PICK_DIST * self.view_scale.recip();
-
-                    let pick_started = Instant::now();
                     let pick = self
                         .picking_index
-                        .query(dp.x - sp, dp.y - sp, dp.x + sp, dp.y + sp)
-                        .iter()
-                        .filter(|i| self.drawing.lines[**i].dist_sq(dp) < (sp * sp))
-                        .reduce(|a, b| {
-                            if self.drawing.lines[*b].dist_sq(dp)
-                                < self.drawing.lines[*a].dist_sq(dp)
-                            {
-                                b
-                            } else {
-                                a
-                            }
-                        })
-                        .map(|i| self.drawing.line_handles[*i]);
+                        .pick(dp, PICK_DIST * self.view_scale.recip());
+
+                    let pick_started = Instant::now();
 
                     if self.pick != pick {
                         if let Some(pick) = pick {
@@ -342,12 +332,31 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
             // direct requests for reprojection until after the next redraw is complete.
             self.defer_reprojection = reproject;
             let reproject_started = Instant::now();
-            update_transform(&mut self.graphics, self.view_transform, self.view_scale);
+            update_transform(
+                &mut self.drawing.graphics,
+                self.view_transform,
+                self.view_scale,
+            );
+
+            let tl = self.view_transform.inverse() * Point { x: 0., y: 0. };
+            let br = self.view_transform.inverse()
+                * Point {
+                    x: surface.config.width as f64,
+                    y: surface.config.height as f64,
+                };
+            let visible = self.picking_index.query(tl.x, tl.y, br.x, br.y);
+            let culled_render_layer = self.drawing.render_layer.filter(|ih| {
+                // TODO: add functionality to measure text and include it in the culling pass.
+                !matches!(
+                    self.drawing.graphics.get(*ih),
+                    Some(GraphicsItem::FatShape(..))
+                ) || visible.contains(&self.drawing.item_entity_map[ih])
+            });
             self.scene.reset();
             self.tv_environment.add_render_layer_to_scene(
                 &mut self.scene,
-                &self.graphics,
-                &self.render_layer,
+                &self.drawing.graphics,
+                &culled_render_layer,
             );
 
             if let Some(pick) = self.pick {
@@ -356,28 +365,35 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
                 gb.update_transform(Default::default(), self.view_transform);
 
-                let entity_lines: Vec<AnyShape> = self
-                    .drawing
-                    .line_handles
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, x)| (*x == pick).then_some(self.drawing.lines[i].clone()))
-                    .collect();
-
                 let paint = gb.register_paint(FatPaint {
                     stroke: Stroke::new(1.414 / self.view_scale),
                     stroke_paint: Some(palette::css::GOLDENROD.into()),
                     fill_paint: None,
                 });
 
-                rl.push_with_bag(
-                    &mut gb,
-                    FatShape {
-                        transform: Default::default(),
-                        paint,
-                        subshapes: Arc::from(entity_lines.as_slice()),
-                    },
-                );
+                self.drawing
+                    .item_entity_map
+                    .iter()
+                    .filter(|(_ih, eh)| **eh == pick)
+                    .for_each(|(ih, _eh)| {
+                        let Some(GraphicsItem::FatShape(FatShape {
+                            transform,
+                            subshapes,
+                            ..
+                        })) = self.drawing.graphics.get(*ih)
+                        else {
+                            return;
+                        };
+
+                        rl.push_with_bag(
+                            &mut gb,
+                            FatShape {
+                                transform: *transform,
+                                subshapes: subshapes.clone(),
+                                paint,
+                            },
+                        );
+                    });
 
                 self.tv_environment
                     .add_render_layer_to_scene(&mut self.scene, &gb, &rl);
@@ -418,28 +434,21 @@ fn main() -> Result<()> {
     let drawing_load_duration = Instant::now().saturating_duration_since(drawing_load_started);
     eprintln!("Drawing took {drawing_load_duration:?} to load and translate.");
 
-    let picking_index = compute_bounds_index(drawing.lines.clone());
+    let picking_index = EntityIndex::new(&drawing);
 
-    let mut graphics = GraphicsBag::default();
-    let mut render_layer = RenderLayer::default();
-
-    let paint = graphics.register_paint(FatPaint {
-        stroke: Default::default(),
-        stroke_paint: Some(Color::BLACK.into()),
-        fill_paint: None,
-    });
-
-    render_layer.push_with_bag(
-        &mut graphics,
-        FatShape {
-            transform: Default::default(),
-            paint,
-            subshapes: drawing.lines.clone(),
-        },
-    );
-
-    for text in drawing.texts.clone() {
-        render_layer.push_with_bag(&mut graphics, text);
+    {
+        eprintln!(
+            "Loaded {} unique entities, {} total stroked shapes.",
+            drawing.item_entity_map.len(),
+            drawing
+                .item_entity_map
+                .iter()
+                .flat_map(|(k, _v)| match drawing.graphics.get(*k) {
+                    Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) => subshapes.iter(),
+                    _ => [].iter(),
+                })
+                .count()
+        );
     }
 
     let mut app = SimpleVelloApp {
@@ -450,9 +459,7 @@ fn main() -> Result<()> {
         drawing,
         picking_index,
         pick: None,
-        graphics,
         tv_environment: Default::default(),
-        render_layer,
         view_transform: Default::default(),
         defer_reprojection: Default::default(),
         view_scale: 1.0,
@@ -482,7 +489,7 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
         RendererOptions {
             surface_format: Some(surface.format),
             use_cpu: false,
-            antialiasing_support: vello::AaSupport::all(),
+            antialiasing_support: vello::AaSupport::area_only(),
             num_init_threads: NonZeroUsize::new(1),
         },
     )
@@ -506,18 +513,77 @@ fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
     );
 }
 
+/// Bounding box index for entities.
+struct EntityIndex {
+    bounds_index: StaticAABB2DIndex<f64>,
+    lines: Arc<[AnyShape]>,
+    entity_mapping: Vec<EntityHandle>,
+}
+
+impl EntityIndex {
+    fn new(d: &TDDrawing) -> Self {
+        let build_started = Instant::now();
+
+        let mut lines: Vec<AnyShape> = vec![];
+        let mut entity_mapping = vec![];
+        for (k, v) in d.item_entity_map.iter() {
+            let Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) = d.graphics.get(*k)
+            else {
+                continue;
+            };
+            for s in subshapes.iter() {
+                entity_mapping.push(*v);
+                lines.push(s.clone());
+            }
+        }
+        let lines: Arc<[AnyShape]> = Arc::from(lines.as_slice());
+
+        let bounds_index = compute_bounds_index(lines.clone());
+
+        let build_duration = Instant::now().saturating_duration_since(build_started);
+        eprintln!("Bounds index took {build_duration:?} to build.");
+
+        Self {
+            bounds_index,
+            lines,
+            entity_mapping,
+        }
+    }
+
+    /// Pick entity that is closest to dp.
+    fn pick(&self, dp: Point, sp: f64) -> Option<EntityHandle> {
+        self.bounds_index
+            .query(dp.x - sp, dp.y - sp, dp.x + sp, dp.y + sp)
+            .iter()
+            .filter(|i| self.lines[**i].dist_sq(dp) < (sp * sp))
+            .reduce(|a, b| {
+                if self.lines[*b].dist_sq(dp) < self.lines[*a].dist_sq(dp) {
+                    b
+                } else {
+                    a
+                }
+            })
+            .map(|i| self.entity_mapping[*i])
+    }
+
+    /// Query which entities' geometry overlaps with the bounds.
+    fn query(&self, left: f64, top: f64, right: f64, bottom: f64) -> BTreeSet<EntityHandle> {
+        self.bounds_index
+            .query(left, top, right, bottom)
+            .iter()
+            .map(|l| self.entity_mapping[*l])
+            .collect()
+    }
+}
+
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
 
 /// Compute an index of bounding boxes for shapes.
 fn compute_bounds_index(lines: Arc<[AnyShape]>) -> StaticAABB2DIndex<f64> {
-    let build_started = Instant::now();
     let mut builder = StaticAABB2DIndexBuilder::new(lines.len());
     for shape in lines.as_ref() {
         let bbox = shape.bounding_box();
         builder.add(bbox.min_x(), bbox.min_y(), bbox.max_x(), bbox.max_y());
     }
-    let index = builder.build().unwrap();
-    let build_duration = Instant::now().saturating_duration_since(build_started);
-    eprintln!("Bounds index took {build_duration:?} to build.");
-    index
+    builder.build().unwrap()
 }
