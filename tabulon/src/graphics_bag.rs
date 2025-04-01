@@ -14,6 +14,10 @@ use peniko::kurbo::Affine;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TransformHandle(Option<NonZeroU32>);
 
+/// A handle for a `GraphicsItem` in a `GraphicsBag`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ItemHandle(u32);
+
 impl From<TransformHandle> for usize {
     fn from(h: TransformHandle) -> Self {
         h.0.map_or(0, |x| x.get() as Self)
@@ -65,15 +69,19 @@ impl Default for GraphicsBag {
 
 impl GraphicsBag {
     /// Push a [`GraphicsItem`], returning its index.
-    pub fn push(&mut self, i: impl Into<GraphicsItem>) -> usize {
+    pub fn push(&mut self, i: impl Into<GraphicsItem>) -> ItemHandle {
         let n = self.items.len();
+        if n >= u32::MAX as usize {
+            panic!("GraphicsBag has too many items.");
+        }
         self.items.push(i.into());
-        n
+        ItemHandle(n.try_into().unwrap())
     }
 
     /// Get an individual [`GraphicsItem`].
-    pub fn get(&self, idx: usize) -> Option<&GraphicsItem> {
-        self.items.get(idx)
+    #[must_use]
+    pub fn get(&self, idx: ItemHandle) -> Option<&GraphicsItem> {
+        self.items.get(idx.0 as usize)
     }
 
     /// Register a transform.
