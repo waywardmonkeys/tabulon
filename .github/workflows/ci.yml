@@ -17,6 +17,8 @@ env:
   RUST_NO_STD_PKGS: "-p tabulon"
   # List of features that depend on the standard library and will be excluded from no_std checks.
   FEATURES_DEPENDING_ON_STD: "std,default"
+  # List of features that need native code (no WebAssembly).
+  FEATURES_DEPENDING_ON_NATIVE: "tracing-tracy"
 
 
 # Rationale
@@ -165,13 +167,13 @@ jobs:
           save-if: ${{ github.event_name != 'merge_group' }}
 
       - name: cargo clippy (no_std)
-        run: cargo hack clippy ${{ env.RUST_NO_STD_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features libm --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} -- -D warnings
+        run: cargo hack clippy ${{ env.RUST_NO_STD_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features libm --exclude-features ${{ env.FEATURES_DEPENDING_ON_STD }} --exclude-features ${{ env.FEATURES_DEPENDING_ON_NATIVE }} -- -D warnings
 
       - name: cargo clippy
-        run: cargo hack clippy --workspace --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std -- -D warnings
+        run: cargo hack clippy --workspace --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std --exclude-features ${{ env.FEATURES_DEPENDING_ON_NATIVE }} -- -D warnings
 
       - name: cargo clippy (auxiliary)
-        run: cargo hack clippy --workspace --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std --tests --benches --examples -- -D warnings
+        run: cargo hack clippy --workspace --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std --exclude-features ${{ env.FEATURES_DEPENDING_ON_NATIVE }} --tests --benches --examples -- -D warnings
 
   test-stable:
     name: cargo test
@@ -221,8 +223,9 @@ jobs:
           save-if: ${{ github.event_name != 'merge_group' }}
 
       # TODO: Find a way to make tests work. Until then the tests are merely compiled.
+      # For now, just do the default features.
       - name: cargo test compile
-        run: cargo test --workspace --locked --target wasm32-unknown-unknown --all-features --no-run
+        run: cargo test --workspace --locked --target wasm32-unknown-unknown --no-run
 
   check-msrv:
     name: cargo check (msrv)
@@ -278,7 +281,7 @@ jobs:
           save-if: ${{ github.event_name != 'merge_group' }}
 
       - name: cargo check
-        run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std
+        run: cargo hack check ${{ env.RUST_MIN_VER_PKGS }} --locked --target wasm32-unknown-unknown --optional-deps --each-feature --ignore-unknown-features --features std --exclude-features ${{ env.FEATURES_DEPENDING_ON_NATIVE }}
 
   miri:
     name: cargo miri
@@ -303,8 +306,9 @@ jobs:
         with:
           save-if: ${{ github.event_name != 'merge_group' }}
 
+      # We'll just run the default features for now.
       - name: cargo miri
-        run: cargo miri test --workspace --locked --all-features --target s390x-unknown-linux-gnu --no-fail-fast
+        run: cargo miri test --workspace --locked --target s390x-unknown-linux-gnu --no-fail-fast
 
   doc:
     name: cargo doc

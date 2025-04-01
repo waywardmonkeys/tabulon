@@ -8,10 +8,7 @@ repository.workspace = true
 publish = false
 
 [features]
-tracing-tracy = [
-    "dep:tracing-tracy",
-    "dep:tracy-client",
-]
+tracing-tracy = ["dep:tracing-tracy", "dep:tracy-client"]
 
 [dependencies]
 anyhow = "1.0.93"
