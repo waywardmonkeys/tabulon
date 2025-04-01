@@ -322,6 +322,9 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
                 surface_texture.present();
 
+                #[cfg(feature = "tracing-tracy")]
+                tracy_client::frame_mark();
+
                 device_handle.device.poll(wgpu::Maintain::Poll);
 
                 if self.defer_reprojection {
@@ -396,6 +399,12 @@ fn main() -> Result<()> {
                 .with_default_directive(tracing::level_filters::LevelFilter::WARN.into())
                 .from_env_lossy(),
         );
+
+    #[cfg(feature = "tracing-tracy")]
+    let tracy_layer = tracing_tracy::TracyLayer::default();
+    #[cfg(feature = "tracing-tracy")]
+    let subscriber = subscriber.with(tracy_layer);
+
     subscriber.init();
 
     let drawing_load_started = Instant::now();

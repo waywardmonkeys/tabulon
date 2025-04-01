@@ -7,11 +7,16 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+tracing-tracy = ["dep:tracing-tracy", "dep:tracy-client"]
+
 [dependencies]
 anyhow = "1.0.93"
 pollster = "0.4.0"
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-tracy = { workspace = true, optional = true }
+tracy-client = { workspace = true, optional = true }
 vello = "0.4.0"
 winit = "0.30.8"
 

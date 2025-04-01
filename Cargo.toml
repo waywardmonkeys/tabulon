@@ -78,3 +78,5 @@ tabulon_vello = { version = "0.1.0", path = "tabulon_vello", default-features = 
 parley = { version = "0.3.0", default-features = false }
 tracing = { version = "0.1.40", features = ["log"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-tracy = "0.11.4"
+tracy-client = "0.18.0"
