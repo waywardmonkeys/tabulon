@@ -24,6 +24,12 @@ use vello::wgpu;
 
 use tabulon_dxf::{EntityHandle, TDDrawing};
 
+use tabulon::{
+    render_layer::RenderLayer,
+    shape::{AnyShape, FatPaint, FatShape},
+    GraphicsBag,
+};
+
 extern crate alloc;
 
 enum RenderState<'s> {
@@ -141,8 +147,9 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
             .drawing
             .lines
             .iter()
-            .map(|x| x.bounding_box())
-            .fold(vello::kurbo::Rect::default(), |a, x| a.union(x));
+            .fold(vello::kurbo::Rect::default(), |a, x| {
+                a.union(x.bounding_box())
+            });
 
         self.view_scale = (size.height as f64 / bounds.size().height)
             .min(size.width as f64 / bounds.size().width);
@@ -354,15 +361,17 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     .filter_map(|(i, x)| (*x == pick).then_some(self.drawing.lines[i].clone()))
                     .collect();
 
+                let paint = gb.register_paint(FatPaint {
+                    stroke: Stroke::new(1.414 / self.view_scale),
+                    stroke_paint: Some(palette::css::GOLDENROD.into()),
+                    fill_paint: None,
+                });
+
                 rl.push_with_bag(
                     &mut gb,
                     FatShape {
                         transform: Default::default(),
-                        paint: FatPaint {
-                            stroke: Stroke::new(1.414 / self.view_scale),
-                            stroke_paint: Some(palette::css::GOLDENROD.into()),
-                            fill_paint: None,
-                        },
+                        paint,
                         subshapes: Arc::from(entity_lines.as_slice()),
                     },
                 );
@@ -405,15 +414,17 @@ fn main() -> Result<()> {
     let mut graphics = GraphicsBag::default();
     let mut render_layer = RenderLayer::default();
 
+    let paint = graphics.register_paint(FatPaint {
+        stroke: Default::default(),
+        stroke_paint: Some(Color::WHITE.into()),
+        fill_paint: None,
+    });
+
     render_layer.push_with_bag(
         &mut graphics,
         FatShape {
             transform: Default::default(),
-            paint: FatPaint {
-                stroke: Default::default(),
-                stroke_paint: Some(Color::WHITE.into()),
-                fill_paint: None,
-            },
+            paint,
             subshapes: drawing.lines.clone(),
         },
     );
@@ -469,27 +480,21 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
     .expect("Couldn't create renderer")
 }
 
-use tabulon::{
-    graphics_bag::{GraphicsBag, GraphicsItem},
-    render_layer::RenderLayer,
-    shape::{AnyShape, FatPaint, FatShape},
-};
-
 /// Update the transform/scale in all the items in a `GraphicsBag`.
 fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
     // Update root transform.
     graphics.update_transform(Default::default(), transform);
 
-    for item in &mut graphics.items {
-        if let GraphicsItem::FatShape(s) = item {
-            s.paint = FatPaint {
-                // Unfortunately, post-transform stroke widths are not supported.
-                stroke: Stroke::new(1.0 / scale),
-                stroke_paint: Some(Color::WHITE.into()),
-                fill_paint: None,
-            }
-        }
-    }
+    // Update default stroke.
+    graphics.update_paint(
+        Default::default(),
+        FatPaint {
+            // Unfortunately, post-transform stroke widths are not supported.
+            stroke: Stroke::new(1.0 / scale),
+            stroke_paint: Some(Color::WHITE.into()),
+            fill_paint: None,
+        },
+    );
 }
 
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};

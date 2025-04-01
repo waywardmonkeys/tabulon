@@ -16,7 +16,7 @@ use crate::floatfuncs::FloatFuncs;
 extern crate alloc;
 use alloc::sync;
 
-use crate::TransformHandle;
+use crate::{PaintHandle, TransformHandle};
 
 /// Enumeration of Kurbo shapes supported in `FatShape`.
 #[derive(Debug, Clone)]
@@ -201,7 +201,7 @@ impl AnyShape {
 }
 
 /// Paint style for [`FatShape`].
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FatPaint {
     /// Stroke information
     pub stroke: Stroke,
@@ -217,7 +217,7 @@ pub struct FatShape {
     /// Affine transform
     pub transform: TransformHandle,
     /// Paint information
-    pub paint: FatPaint,
+    pub paint: PaintHandle,
     /// [`AnyShape`]s
     pub subshapes: sync::Arc<[AnyShape]>,
 }
