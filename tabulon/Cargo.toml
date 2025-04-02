@@ -23,7 +23,6 @@ libm = ["dep:libm", "peniko/libm", "parley/libm"]
 [dependencies]
 peniko = { version = "0.3.1", default-features = false }
 parley = { workspace = true }
-smallvec = "1.13.2"
 
 [dependencies.libm]
 version = "0.2.11"

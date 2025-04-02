@@ -2512,7 +2512,6 @@ dependencies = [
  "libm",
  "parley",
  "peniko",
- "smallvec",
 ]
 
 [[package]]
