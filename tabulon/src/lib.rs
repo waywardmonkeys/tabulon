@@ -10,6 +10,7 @@
 //! - `libm`: Use floating point implementations from [libm][].
 //!
 //! At least one of `std` and `libm` is required; `std` overrides `libm`.
+//!
 #![cfg_attr(feature = "libm", doc = "[libm]: libm")]
 #![cfg_attr(not(feature = "libm"), doc = "[libm]: https://crates.io/crates/libm")]
 // LINEBENDER LINT SET - lib.rs - v3
