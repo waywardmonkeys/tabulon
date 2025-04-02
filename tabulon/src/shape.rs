@@ -8,7 +8,6 @@ use peniko::{
     },
     Brush,
 };
-pub use smallvec::SmallVec;
 
 #[cfg(all(not(feature = "std"), not(test)))]
 use crate::floatfuncs::FloatFuncs;
