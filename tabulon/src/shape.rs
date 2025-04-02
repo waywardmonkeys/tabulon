@@ -211,7 +211,7 @@ pub struct FatPaint {
 }
 
 /// Collection of subshapes with the same transform and paint style.
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct FatShape {
     /// Affine transform
     pub transform: TransformHandle,

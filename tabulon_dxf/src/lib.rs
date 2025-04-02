@@ -10,9 +10,10 @@ use tabulon::{
         kurbo::{Affine, Arc, BezPath, Circle, Line, PathEl, Point, Vec2, DEFAULT_ACCURACY},
         Color,
     },
-    shape::AnyShape,
+    render_layer::RenderLayer,
+    shape::{AnyShape, FatPaint, FatShape},
     text::{AttachmentPoint, FatText},
-    DirectIsometry,
+    DirectIsometry, GraphicsBag, ItemHandle,
 };
 
 use parley::{Alignment, StyleSet};
@@ -31,6 +32,10 @@ use core::num::NonZeroU64;
 /// A valid handle for an [`Entity`](dxf::entities::Entity) present in the drawing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct EntityHandle(pub(crate) NonZeroU64);
+
+/// A valid handle for a [`Layer`](dxf::tables::Layer) present in the drawing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LayerHandle(pub(crate) NonZeroU64);
 
 /// Convert entity to lines
 pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
@@ -258,12 +263,18 @@ impl DrawingInfo {
     reason = "Not particularly useful, and members don't implement Debug."
 )]
 pub struct TDDrawing {
-    /// Collection of shapes for drawing lines.
-    pub lines: sync::Arc<[AnyShape]>,
-    /// Collection of entity handles for drawing lines.
-    pub line_handles: sync::Arc<[EntityHandle]>,
-    /// Collection of text descriptions (from TEXT/MTEXT entities).
-    pub texts: Vec<FatText>,
+    /// `GraphicsBag` containing drawn items.
+    pub graphics: GraphicsBag,
+    /// Mapping from graphics items to entity handles.
+    pub item_entity_map: BTreeMap<ItemHandle, EntityHandle>,
+    /// Entities for layers.
+    pub entity_layer_map: BTreeMap<EntityHandle, LayerHandle>,
+    /// Render layer in drawing order.
+    pub render_layer: RenderLayer,
+    /// Enabled layers.
+    pub enabled_layers: BTreeSet<LayerHandle>,
+    /// Layer names.
+    pub layer_names: BTreeMap<LayerHandle, sync::Arc<str>>,
     /// Drawing information object.
     pub info: DrawingInfo,
 }
@@ -280,15 +291,52 @@ fn style_size_is_zero(s: &StyleSet<Option<Color>>) -> bool {
 /// Load a DXF from a path, and convert the entities in its enabled layers to Tabulon [`AnyShape`]s.
 #[cfg(feature = "std")]
 pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> {
-    let mut lines = vec![];
-    let mut line_handles = vec![];
-    let mut texts = vec![];
+    let mut gb = GraphicsBag::default();
+    let mut rl = RenderLayer::default();
+    let mut item_entity_map = BTreeMap::new();
+    let mut entity_layer_map = BTreeMap::new();
+
+    // FIXME: use real colors and line widths, and expose information for line scaling.
+    //        This currently sets the paint at position 0/default in the palette.
+    let _paint = gb.register_paint(FatPaint {
+        stroke: Default::default(),
+        stroke_paint: Some(Color::BLACK.into()),
+        fill_paint: None,
+    });
 
     let drawing = Drawing::load_file(path)?;
 
     let visible_layers: BTreeSet<&str> = drawing
         .layers()
         .filter_map(|l| l.is_layer_on.then_some(l.name.as_str()))
+        .collect();
+
+    let enabled_layers = drawing
+        .layers()
+        .filter_map(|l| {
+            l.is_layer_on
+                .then_some(LayerHandle(NonZeroU64::new(l.handle.0).unwrap()))
+        })
+        .collect();
+
+    let layer_names = drawing
+        .layers()
+        .map(|l| {
+            (
+                LayerHandle(NonZeroU64::new(l.handle.0).unwrap()),
+                l.name.as_str().into(),
+            )
+        })
+        .collect();
+
+    let handle_for_layer_name: BTreeMap<&str, LayerHandle> = drawing
+        .layers()
+        .map(|l| {
+            (
+                l.name.as_str(),
+                LayerHandle(NonZeroU64::new(l.handle.0).unwrap()),
+            )
+        })
         .collect();
 
     // FIXME: It's conceivable that a BLOCK may have an INSERT so
@@ -375,6 +423,10 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         {
             continue;
         }
+
+        let eh = EntityHandle(NonZeroU64::new(e.common.handle.0).unwrap());
+        let lh = handle_for_layer_name[e.common.layer.as_str()];
+
         match e.specific {
             EntityType::Insert(ref ins) => {
                 // FIXME: currently only support viewing from +Z.
@@ -383,6 +435,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 }
 
                 if let Some(b) = blocks.get(ins.name.as_str()) {
+                    let mut lines: Vec<AnyShape> = vec![];
                     let base_transform =
                         Affine::scale_non_uniform(ins.x_scale_factor, ins.y_scale_factor);
                     let location = point_from_dxf_point(&ins.location);
@@ -396,13 +449,20 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                                 .then_rotate(-ins.rotation.to_radians())
                                 .then_translate(location.to_vec2());
                             for s in b {
-                                line_handles.push(EntityHandle(
-                                    NonZeroU64::new(e.common.handle.0).unwrap(),
-                                ));
                                 lines.push(s.transform(transform));
                             }
                         }
                     }
+
+                    let ih = rl.push_with_bag(
+                        &mut gb,
+                        FatShape {
+                            subshapes: sync::Arc::from(lines.as_slice()),
+                            ..Default::default()
+                        },
+                    );
+                    item_entity_map.insert(ih, eh);
+                    entity_layer_map.insert(eh, lh);
                 }
             }
             #[allow(clippy::cast_possible_truncation, reason = "It doesn't matter")]
@@ -476,31 +536,38 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     }
                 };
 
-                texts.push(FatText {
-                    transform: Default::default(),
-                    text: nt.into(),
-                    // TODO: Map more styling information from the MText
-                    style: styles.get(mt.text_style_name.as_str()).map_or_else(
-                        || StyleSet::new(mt.initial_text_height as f32),
-                        |s| {
-                            if style_size_is_zero(s) {
-                                let mut news = s.clone();
-                                news.insert(StyleProperty::FontSize(mt.initial_text_height as f32));
-                                news
-                            } else {
-                                s.clone()
-                            }
-                        },
-                    ),
-                    alignment,
-                    insertion: DirectIsometry::new(
-                        // As far as I'm aware, x_axis_direction and rotation are exclusive.
-                        -mt.rotation_angle.to_radians() + x_angle,
-                        point_from_dxf_point(&mt.insertion_point).to_vec2(),
-                    ),
-                    max_inline_size,
-                    attachment_point,
-                });
+                let ih = rl.push_with_bag(
+                    &mut gb,
+                    FatText {
+                        transform: Default::default(),
+                        text: nt.into(),
+                        // TODO: Map more styling information from the MText
+                        style: styles.get(mt.text_style_name.as_str()).map_or_else(
+                            || StyleSet::new(mt.initial_text_height as f32),
+                            |s| {
+                                if style_size_is_zero(s) {
+                                    let mut news = s.clone();
+                                    news.insert(StyleProperty::FontSize(
+                                        mt.initial_text_height as f32,
+                                    ));
+                                    news
+                                } else {
+                                    s.clone()
+                                }
+                            },
+                        ),
+                        alignment,
+                        insertion: DirectIsometry::new(
+                            // As far as I'm aware, x_axis_direction and rotation are exclusive.
+                            -mt.rotation_angle.to_radians() + x_angle,
+                            point_from_dxf_point(&mt.insertion_point).to_vec2(),
+                        ),
+                        max_inline_size,
+                        attachment_point,
+                    },
+                );
+                item_entity_map.insert(ih, eh);
+                entity_layer_map.insert(eh, lh);
             }
             EntityType::Text(ref t) => {
                 // FIXME: currently only support viewing from +Z.
@@ -528,49 +595,64 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     .replace("%%o", "");
 
                 #[allow(clippy::cast_possible_truncation, reason = "It doesn't matter")]
-                texts.push(FatText {
-                    transform: Default::default(),
-                    text: text.into(),
-                    style: styles.get(t.text_style_name.as_str()).map_or_else(
-                        || StyleSet::new(t.text_height as f32),
-                        |s| {
-                            let mut sized = if style_size_is_zero(s) {
-                                let mut news = s.clone();
-                                news.insert(StyleProperty::FontSize(t.text_height as f32));
-                                news
-                            } else {
-                                s.clone()
-                            };
-                            if t.oblique_angle != 0.0 {
-                                sized.insert(StyleProperty::FontStyle(FontStyle::Oblique(Some(
-                                    t.oblique_angle as f32,
-                                ))));
-                            }
-                            sized
-                        },
-                    ),
-                    alignment: Default::default(),
-                    insertion: DirectIsometry::new(
-                        -t.rotation.to_radians(),
-                        point_from_dxf_point(&t.location).to_vec2(),
-                    ),
-                    max_inline_size: None,
-                    attachment_point: Default::default(),
-                });
+                let ih = rl.push_with_bag(
+                    &mut gb,
+                    FatText {
+                        transform: Default::default(),
+                        text: text.into(),
+                        style: styles.get(t.text_style_name.as_str()).map_or_else(
+                            || StyleSet::new(t.text_height as f32),
+                            |s| {
+                                let mut sized = if style_size_is_zero(s) {
+                                    let mut news = s.clone();
+                                    news.insert(StyleProperty::FontSize(t.text_height as f32));
+                                    news
+                                } else {
+                                    s.clone()
+                                };
+                                if t.oblique_angle != 0.0 {
+                                    sized.insert(StyleProperty::FontStyle(FontStyle::Oblique(
+                                        Some(t.oblique_angle as f32),
+                                    )));
+                                }
+                                sized
+                            },
+                        ),
+                        alignment: Default::default(),
+                        insertion: DirectIsometry::new(
+                            -t.rotation.to_radians(),
+                            point_from_dxf_point(&t.location).to_vec2(),
+                        ),
+                        max_inline_size: None,
+                        attachment_point: Default::default(),
+                    },
+                );
+                item_entity_map.insert(ih, eh);
+                entity_layer_map.insert(eh, lh);
             }
             _ => {
                 if let Some(s) = shape_from_entity(e) {
-                    line_handles.push(EntityHandle(NonZeroU64::new(e.common.handle.0).unwrap()));
-                    lines.push(s);
+                    let ih = rl.push_with_bag(
+                        &mut gb,
+                        FatShape {
+                            subshapes: sync::Arc::from([s]),
+                            ..Default::default()
+                        },
+                    );
+                    item_entity_map.insert(ih, eh);
+                    entity_layer_map.insert(eh, lh);
                 }
             }
         }
     }
 
     Ok(TDDrawing {
-        lines: sync::Arc::from(lines.as_slice()),
-        line_handles: sync::Arc::from(line_handles.as_slice()),
-        texts,
+        graphics: gb,
+        render_layer: rl,
+        item_entity_map,
+        entity_layer_map,
+        enabled_layers,
+        layer_names,
         info: DrawingInfo::new(drawing),
     })
 }

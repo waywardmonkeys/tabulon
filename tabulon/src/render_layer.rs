@@ -40,4 +40,11 @@ impl RenderLayer {
         self.indices.push(n);
         n
     }
+
+    /// Push an `ItemHandle` into the render layer.
+    pub fn filter(&mut self, f: impl Fn(&ItemHandle) -> bool) -> Self {
+        Self {
+            indices: self.indices.iter().copied().filter(f).collect(),
+        }
+    }
 }
