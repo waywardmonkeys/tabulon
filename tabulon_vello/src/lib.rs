@@ -133,7 +133,7 @@ impl Environment {
                                 scene
                                     .draw_glyphs(run.font())
                                     // TODO: Color will come from styled text.
-                                    .brush(Color::WHITE)
+                                    .brush(Color::BLACK)
                                     .hint(false)
                                     .transform(transform * placement_transform)
                                     .glyph_transform(synthesis.skew().map(|angle| {

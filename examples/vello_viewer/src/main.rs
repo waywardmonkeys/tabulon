@@ -312,10 +312,10 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                         &self.scene,
                         &surface_texture,
                         &vello::RenderParams {
-                            base_color: palette::css::BLACK, // Background color
+                            base_color: Color::WHITE, // Background color
                             width,
                             height,
-                            antialiasing_method: AaConfig::Msaa16,
+                            antialiasing_method: AaConfig::Area,
                         },
                     )
                     .expect("failed to render to surface");
@@ -425,7 +425,7 @@ fn main() -> Result<()> {
 
     let paint = graphics.register_paint(FatPaint {
         stroke: Default::default(),
-        stroke_paint: Some(Color::WHITE.into()),
+        stroke_paint: Some(Color::BLACK.into()),
         fill_paint: None,
     });
 
@@ -500,7 +500,7 @@ fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
         FatPaint {
             // Unfortunately, post-transform stroke widths are not supported.
             stroke: Stroke::new(1.0 / scale),
-            stroke_paint: Some(Color::WHITE.into()),
+            stroke_paint: Some(Color::BLACK.into()),
             fill_paint: None,
         },
     );
