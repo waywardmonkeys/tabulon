@@ -106,6 +106,25 @@ impl AnyShape {
         )
     }
 
+    /// Returns an iterator over this shape expressed as `PathEl`s; that is, as Bézier path *elements*.
+    pub fn to_path(&self) -> BezPath {
+        impl_any_shape_fun!(
+            self,
+            to_path,
+            DEFAULT_ACCURACY,
+            Arc | BezPath
+                | Circle
+                | CircleSegment
+                | CubicBez
+                | Ellipse
+                | Line
+                | PathSeg
+                | QuadBez
+                | Rect
+                | RoundedRect
+        )
+    }
+
     /// `true` if given point is inside the shape.
     pub fn contains(&self, p: Point) -> bool {
         impl_any_shape_fun!(

@@ -9,7 +9,10 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing_subscriber::prelude::*;
-use vello::kurbo::{Affine, Point, Stroke, Vec2};
+use vello::kurbo::{
+    Affine, ParamCurveExtrema, ParamCurveNearest, PathSeg, Point, Rect, Stroke, Vec2,
+    DEFAULT_ACCURACY,
+};
 use vello::peniko::color::palette;
 use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
@@ -26,7 +29,7 @@ use tabulon_dxf::{EntityHandle, TDDrawing};
 
 use tabulon::{
     render_layer::RenderLayer,
-    shape::{AnyShape, FatPaint, FatShape},
+    shape::{FatPaint, FatShape},
     GraphicsBag, GraphicsItem,
 };
 
@@ -138,17 +141,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
             window,
         };
 
-        let bounds = self
-            .drawing
-            .item_entity_map
-            .iter()
-            .flat_map(|(k, _v)| match self.drawing.graphics.get(*k) {
-                Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) => subshapes.iter(),
-                _ => [].iter(),
-            })
-            .fold(vello::kurbo::Rect::default(), |a, x| {
-                a.union(x.bounding_box())
-            });
+        let bounds = self.picking_index.bounds();
 
         self.view_scale = (size.height as f64 / bounds.size().height)
             .min(size.width as f64 / bounds.size().width);
@@ -227,12 +220,12 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                         .then_translate(-(self.gestures.cursor_pos - p));
                     reproject = true;
                 } else {
-                    const PICK_DIST: f64 = 4.;
+                    let pick_dist: f64 = window.scale_factor() * 1.414;
+                    let pick_started = Instant::now();
+
                     let pick = self
                         .picking_index
-                        .pick(dp, PICK_DIST * self.view_scale.recip());
-
-                    let pick_started = Instant::now();
+                        .pick(dp, pick_dist * self.view_scale.recip());
 
                     if self.pick != pick {
                         if let Some(pick) = pick {
@@ -344,7 +337,15 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     x: surface.config.width as f64,
                     y: surface.config.height as f64,
                 };
-            let visible = self.picking_index.query(tl.x, tl.y, br.x, br.y);
+
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "The loss of range and precision is acceptable."
+            )]
+            let visible =
+                self.picking_index
+                    .query(tl.x as f32, tl.y as f32, br.x as f32, br.y as f32);
+
             let culled_render_layer = self.drawing.render_layer.filter(|ih| {
                 // TODO: add functionality to measure text and include it in the culling pass.
                 !matches!(
@@ -384,7 +385,6 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                         else {
                             return;
                         };
-
                         rl.push_with_bag(
                             &mut gb,
                             FatShape {
@@ -438,7 +438,7 @@ fn main() -> Result<()> {
 
     {
         eprintln!(
-            "Loaded {} unique entities, {} total stroked shapes.",
+            "Loaded {} unique entities, {} total stroked shapes, and {} path elements..",
             drawing.item_entity_map.len(),
             drawing
                 .item_entity_map
@@ -447,7 +447,16 @@ fn main() -> Result<()> {
                     Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) => subshapes.iter(),
                     _ => [].iter(),
                 })
-                .count()
+                .count(),
+            drawing
+                .item_entity_map
+                .iter()
+                .flat_map(|(k, _v)| match drawing.graphics.get(*k) {
+                    Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) => subshapes.iter(),
+                    _ => [].iter(),
+                })
+                .flat_map(|s| s.to_path().into_iter())
+                .count(),
         );
     }
 
@@ -513,18 +522,24 @@ fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
     );
 }
 
+use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
+
 /// Bounding box index for entities.
 struct EntityIndex {
-    bounds_index: StaticAABB2DIndex<f64>,
-    lines: Arc<[AnyShape]>,
-    entity_mapping: Vec<EntityHandle>,
+    bounds_index: StaticAABB2DIndex<f32>,
+    lines: Box<[PathSeg]>,
+    entity_mapping: Box<[EntityHandle]>,
 }
 
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "The loss of range and precision is acceptable."
+)]
 impl EntityIndex {
     fn new(d: &TDDrawing) -> Self {
         let build_started = Instant::now();
 
-        let mut lines: Vec<AnyShape> = vec![];
+        let mut lines: Vec<PathSeg> = vec![];
         let mut entity_mapping = vec![];
         for (k, v) in d.item_entity_map.iter() {
             let Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) = d.graphics.get(*k)
@@ -532,13 +547,16 @@ impl EntityIndex {
                 continue;
             };
             for s in subshapes.iter() {
-                entity_mapping.push(*v);
-                lines.push(s.clone());
+                for seg in s.to_path().segments() {
+                    entity_mapping.push(*v);
+                    lines.push(seg);
+                }
             }
         }
-        let lines: Arc<[AnyShape]> = Arc::from(lines.as_slice());
+        let lines = Box::from(lines.as_slice());
+        let entity_mapping = Box::from(entity_mapping.as_slice());
 
-        let bounds_index = compute_bounds_index(lines.clone());
+        let bounds_index = compute_bounds_index(&lines);
 
         let build_duration = Instant::now().saturating_duration_since(build_started);
         eprintln!("Bounds index took {build_duration:?} to build.");
@@ -553,37 +571,61 @@ impl EntityIndex {
     /// Pick entity that is closest to dp.
     fn pick(&self, dp: Point, sp: f64) -> Option<EntityHandle> {
         self.bounds_index
-            .query(dp.x - sp, dp.y - sp, dp.x + sp, dp.y + sp)
-            .iter()
-            .filter(|i| self.lines[**i].dist_sq(dp) < (sp * sp))
-            .reduce(|a, b| {
-                if self.lines[*b].dist_sq(dp) < self.lines[*a].dist_sq(dp) {
-                    b
+            .query(
+                (dp.x - sp) as f32,
+                (dp.y - sp) as f32,
+                (dp.x + sp) as f32,
+                (dp.y + sp) as f32,
+            )
+            .into_iter()
+            .fold((f64::INFINITY, None), |(dsq, i), b| {
+                let ndsq = self.lines[b].nearest(dp, DEFAULT_ACCURACY).distance_sq;
+                if ndsq < dsq && ndsq < (sp * sp) {
+                    (ndsq, Some(b))
                 } else {
-                    a
+                    (dsq, i)
                 }
             })
-            .map(|i| self.entity_mapping[*i])
+            .1
+            .map(|i| self.entity_mapping[i])
     }
 
     /// Query which entities' geometry overlaps with the bounds.
-    fn query(&self, left: f64, top: f64, right: f64, bottom: f64) -> BTreeSet<EntityHandle> {
+    fn query(&self, left: f32, top: f32, right: f32, bottom: f32) -> BTreeSet<EntityHandle> {
         self.bounds_index
             .query(left, top, right, bottom)
             .iter()
             .map(|l| self.entity_mapping[*l])
             .collect()
     }
+
+    fn bounds(&self) -> Rect {
+        self.bounds_index
+            .bounds()
+            .map_or(Rect::default(), |b| Rect {
+                x0: b.min_x as f64,
+                y0: b.min_y as f64,
+                x1: b.max_x as f64,
+                y1: b.max_y as f64,
+            })
+    }
 }
 
-use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};
-
 /// Compute an index of bounding boxes for shapes.
-fn compute_bounds_index(lines: Arc<[AnyShape]>) -> StaticAABB2DIndex<f64> {
-    let mut builder = StaticAABB2DIndexBuilder::new(lines.len());
-    for shape in lines.as_ref() {
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "The loss of range and precision is acceptable."
+)]
+fn compute_bounds_index(lines: &[PathSeg]) -> StaticAABB2DIndex<f32> {
+    let mut builder = StaticAABB2DIndexBuilder::<f32>::new(lines.len());
+    for shape in lines.iter() {
         let bbox = shape.bounding_box();
-        builder.add(bbox.min_x(), bbox.min_y(), bbox.max_x(), bbox.max_y());
+        builder.add(
+            bbox.min_x() as f32,
+            bbox.min_y() as f32,
+            bbox.max_x() as f32,
+            bbox.max_y() as f32,
+        );
     }
     builder.build().unwrap()
 }

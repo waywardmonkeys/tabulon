@@ -13,7 +13,7 @@ use tabulon::{
     render_layer::RenderLayer,
     shape::{AnyShape, FatPaint, FatShape},
     text::{AttachmentPoint, FatText},
-    DirectIsometry, GraphicsBag, ItemHandle,
+    DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle,
 };
 
 use parley::{Alignment, StyleSet};
@@ -21,7 +21,7 @@ use parley::{Alignment, StyleSet};
 extern crate alloc;
 use alloc::{
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
-    sync, vec,
+    sync,
 };
 
 #[cfg(feature = "std")]
@@ -427,6 +427,12 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         let eh = EntityHandle(NonZeroU64::new(e.common.handle.0).unwrap());
         let lh = handle_for_layer_name[e.common.layer.as_str()];
 
+        let mut push_item = |item: GraphicsItem| {
+            let ih = rl.push_with_bag(&mut gb, item);
+            item_entity_map.insert(ih, eh);
+            entity_layer_map.insert(eh, lh);
+        };
+
         match e.specific {
             EntityType::Insert(ref ins) => {
                 // FIXME: currently only support viewing from +Z.
@@ -435,7 +441,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 }
 
                 if let Some(b) = blocks.get(ins.name.as_str()) {
-                    let mut lines: Vec<AnyShape> = vec![];
+                    let mut lines = BezPath::new();
                     let base_transform =
                         Affine::scale_non_uniform(ins.x_scale_factor, ins.y_scale_factor);
                     let location = point_from_dxf_point(&ins.location);
@@ -449,20 +455,18 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                                 .then_rotate(-ins.rotation.to_radians())
                                 .then_translate(location.to_vec2());
                             for s in b {
-                                lines.push(s.transform(transform));
+                                lines.extend(s.transform(transform).to_path().iter());
                             }
                         }
                     }
 
-                    let ih = rl.push_with_bag(
-                        &mut gb,
+                    push_item(
                         FatShape {
-                            subshapes: sync::Arc::from(lines.as_slice()),
+                            subshapes: sync::Arc::from([lines.into()]),
                             ..Default::default()
-                        },
+                        }
+                        .into(),
                     );
-                    item_entity_map.insert(ih, eh);
-                    entity_layer_map.insert(eh, lh);
                 }
             }
             #[allow(clippy::cast_possible_truncation, reason = "It doesn't matter")]
@@ -536,8 +540,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     }
                 };
 
-                let ih = rl.push_with_bag(
-                    &mut gb,
+                push_item(
                     FatText {
                         transform: Default::default(),
                         text: nt.into(),
@@ -564,10 +567,9 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                         ),
                         max_inline_size,
                         attachment_point,
-                    },
+                    }
+                    .into(),
                 );
-                item_entity_map.insert(ih, eh);
-                entity_layer_map.insert(eh, lh);
             }
             EntityType::Text(ref t) => {
                 // FIXME: currently only support viewing from +Z.
@@ -595,8 +597,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     .replace("%%o", "");
 
                 #[allow(clippy::cast_possible_truncation, reason = "It doesn't matter")]
-                let ih = rl.push_with_bag(
-                    &mut gb,
+                push_item(
                     FatText {
                         transform: Default::default(),
                         text: text.into(),
@@ -625,22 +626,19 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                         ),
                         max_inline_size: None,
                         attachment_point: Default::default(),
-                    },
+                    }
+                    .into(),
                 );
-                item_entity_map.insert(ih, eh);
-                entity_layer_map.insert(eh, lh);
             }
             _ => {
                 if let Some(s) = shape_from_entity(e) {
-                    let ih = rl.push_with_bag(
-                        &mut gb,
+                    push_item(
                         FatShape {
                             subshapes: sync::Arc::from([s]),
                             ..Default::default()
-                        },
+                        }
+                        .into(),
                     );
-                    item_entity_map.insert(ih, eh);
-                    entity_layer_map.insert(eh, lh);
                 }
             }
         }
