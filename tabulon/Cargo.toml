@@ -17,12 +17,13 @@ targets = []
 
 [features]
 default = ["std"]
-std = ["peniko/std", "parley/std"]
+std = ["peniko/std", "parley/std", "tracing/std"]
 libm = ["dep:libm", "peniko/libm", "parley/libm"]
 
 [dependencies]
 peniko = { version = "0.3.1", default-features = false }
 parley = { workspace = true }
+tracing = { workspace = true }
 
 [dependencies.libm]
 version = "0.2.11"

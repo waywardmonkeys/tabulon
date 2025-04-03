@@ -34,6 +34,7 @@ pub struct Environment {
 
 impl Environment {
     /// Add a [`RenderLayer`] to a Vello [`Scene`].
+    #[tracing::instrument(skip_all)]
     pub fn add_render_layer_to_scene(
         &mut self,
         scene: &mut Scene,
