@@ -290,6 +290,7 @@ fn style_size_is_zero(s: &StyleSet<Option<Color>>) -> bool {
 
 /// Load a DXF from a path, and convert the entities in its enabled layers to Tabulon [`AnyShape`]s.
 #[cfg(feature = "std")]
+#[tracing::instrument(skip_all)]
 pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> {
     let mut gb = GraphicsBag::default();
     let mut rl = RenderLayer::default();

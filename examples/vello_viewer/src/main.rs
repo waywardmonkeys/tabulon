@@ -175,6 +175,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -280,30 +281,36 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
                 let device_handle = &self.context.devices[surface.dev_id];
 
-                let surface_texture = surface
-                    .surface
-                    .get_current_texture()
-                    .expect("failed to get surface texture");
+                let surface_texture = tracing::info_span!("get_current_texture").in_scope(|| {
+                    surface
+                        .surface
+                        .get_current_texture()
+                        .expect("failed to get surface texture")
+                });
 
-                // Render to the surface's texture
-                self.renderers[surface.dev_id]
-                    .as_mut()
-                    .unwrap()
-                    .render_to_surface(
-                        &device_handle.device,
-                        &device_handle.queue,
-                        &self.scene,
-                        &surface_texture,
-                        &vello::RenderParams {
-                            base_color: Color::WHITE, // Background color
-                            width,
-                            height,
-                            antialiasing_method: AaConfig::Area,
-                        },
-                    )
-                    .expect("failed to render to surface");
+                tracing::info_span!("render_to_surface").in_scope(|| {
+                    // Render to the surface's texture
+                    self.renderers[surface.dev_id]
+                        .as_mut()
+                        .unwrap()
+                        .render_to_surface(
+                            &device_handle.device,
+                            &device_handle.queue,
+                            &self.scene,
+                            &surface_texture,
+                            &vello::RenderParams {
+                                base_color: Color::WHITE, // Background color
+                                width,
+                                height,
+                                antialiasing_method: AaConfig::Area,
+                            },
+                        )
+                        .expect("failed to render to surface");
+                });
 
-                surface_texture.present();
+                tracing::info_span!("present_surface").in_scope(|| {
+                    surface_texture.present();
+                });
 
                 #[cfg(feature = "tracing-tracy")]
                 tracy_client::frame_mark();
@@ -319,90 +326,93 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         }
 
         if reproject || reproject_deferred {
-            if self.defer_reprojection {
-                return;
-            }
-            // direct requests for reprojection until after the next redraw is complete.
-            self.defer_reprojection = reproject;
-            let reproject_started = Instant::now();
-            update_transform(
-                &mut self.drawing.graphics,
-                self.view_transform,
-                self.view_scale,
-            );
+            tracing::info_span!("reproject").in_scope(|| {
+                if self.defer_reprojection {
+                    return;
+                }
+                // direct requests for reprojection until after the next redraw is complete.
+                self.defer_reprojection = reproject;
+                let reproject_started = Instant::now();
+                update_transform(
+                    &mut self.drawing.graphics,
+                    self.view_transform,
+                    self.view_scale,
+                );
 
-            let tl = self.view_transform.inverse() * Point { x: 0., y: 0. };
-            let br = self.view_transform.inverse()
-                * Point {
-                    x: surface.config.width as f64,
-                    y: surface.config.height as f64,
-                };
+                let tl = self.view_transform.inverse() * Point { x: 0., y: 0. };
+                let br = self.view_transform.inverse()
+                    * Point {
+                        x: surface.config.width as f64,
+                        y: surface.config.height as f64,
+                    };
 
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "The loss of range and precision is acceptable."
-            )]
-            let visible =
-                self.picking_index
-                    .query(tl.x as f32, tl.y as f32, br.x as f32, br.y as f32);
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "The loss of range and precision is acceptable."
+                )]
+                let visible =
+                    self.picking_index
+                        .query(tl.x as f32, tl.y as f32, br.x as f32, br.y as f32);
 
-            let culled_render_layer = self.drawing.render_layer.filter(|ih| {
-                // TODO: add functionality to measure text and include it in the culling pass.
-                !matches!(
-                    self.drawing.graphics.get(*ih),
-                    Some(GraphicsItem::FatShape(..))
-                ) || visible.contains(&self.drawing.item_entity_map[ih])
-            });
-            self.scene.reset();
-            self.tv_environment.add_render_layer_to_scene(
-                &mut self.scene,
-                &self.drawing.graphics,
-                &culled_render_layer,
-            );
-
-            if let Some(pick) = self.pick {
-                let mut gb = GraphicsBag::default();
-                let mut rl = RenderLayer::default();
-
-                gb.update_transform(Default::default(), self.view_transform);
-
-                let paint = gb.register_paint(FatPaint {
-                    stroke: Stroke::new(1.414 / self.view_scale),
-                    stroke_paint: Some(palette::css::GOLDENROD.into()),
-                    fill_paint: None,
+                let culled_render_layer = self.drawing.render_layer.filter(|ih| {
+                    // TODO: add functionality to measure text and include it in the culling pass.
+                    !matches!(
+                        self.drawing.graphics.get(*ih),
+                        Some(GraphicsItem::FatShape(..))
+                    ) || visible.contains(&self.drawing.item_entity_map[ih])
                 });
+                self.scene.reset();
+                self.tv_environment.add_render_layer_to_scene(
+                    &mut self.scene,
+                    &self.drawing.graphics,
+                    &culled_render_layer,
+                );
 
-                self.drawing
-                    .item_entity_map
-                    .iter()
-                    .filter(|(_ih, eh)| **eh == pick)
-                    .for_each(|(ih, _eh)| {
-                        let Some(GraphicsItem::FatShape(FatShape {
-                            transform,
-                            subshapes,
-                            ..
-                        })) = self.drawing.graphics.get(*ih)
-                        else {
-                            return;
-                        };
-                        rl.push_with_bag(
-                            &mut gb,
-                            FatShape {
-                                transform: *transform,
-                                subshapes: subshapes.clone(),
-                                paint,
-                            },
-                        );
+                if let Some(pick) = self.pick {
+                    let mut gb = GraphicsBag::default();
+                    let mut rl = RenderLayer::default();
+
+                    gb.update_transform(Default::default(), self.view_transform);
+
+                    let paint = gb.register_paint(FatPaint {
+                        stroke: Stroke::new(1.414 / self.view_scale),
+                        stroke_paint: Some(palette::css::GOLDENROD.into()),
+                        fill_paint: None,
                     });
 
-                self.tv_environment
-                    .add_render_layer_to_scene(&mut self.scene, &gb, &rl);
-            }
+                    self.drawing
+                        .item_entity_map
+                        .iter()
+                        .filter(|(_ih, eh)| **eh == pick)
+                        .for_each(|(ih, _eh)| {
+                            let Some(GraphicsItem::FatShape(FatShape {
+                                transform,
+                                subshapes,
+                                ..
+                            })) = self.drawing.graphics.get(*ih)
+                            else {
+                                return;
+                            };
+                            rl.push_with_bag(
+                                &mut gb,
+                                FatShape {
+                                    transform: *transform,
+                                    subshapes: subshapes.clone(),
+                                    paint,
+                                },
+                            );
+                        });
 
-            let reproject_duration = Instant::now().saturating_duration_since(reproject_started);
-            eprintln!("Reprojection/reencoding took {reproject_duration:?}");
+                    self.tv_environment
+                        .add_render_layer_to_scene(&mut self.scene, &gb, &rl);
+                }
 
-            window.request_redraw();
+                let reproject_duration =
+                    Instant::now().saturating_duration_since(reproject_started);
+                eprintln!("Reprojection/reencoding took {reproject_duration:?}");
+
+                window.request_redraw();
+            });
         }
     }
 }
@@ -506,6 +516,7 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
 }
 
 /// Update the transform/scale in all the items in a `GraphicsBag`.
+#[tracing::instrument(skip_all)]
 fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
     // Update root transform.
     graphics.update_transform(Default::default(), transform);
@@ -569,6 +580,7 @@ impl EntityIndex {
     }
 
     /// Pick entity that is closest to dp.
+    #[tracing::instrument(skip_all)]
     fn pick(&self, dp: Point, sp: f64) -> Option<EntityHandle> {
         self.bounds_index
             .query(
@@ -591,6 +603,7 @@ impl EntityIndex {
     }
 
     /// Query which entities' geometry overlaps with the bounds.
+    #[tracing::instrument(skip_all)]
     fn query(&self, left: f32, top: f32, right: f32, bottom: f32) -> BTreeSet<EntityHandle> {
         self.bounds_index
             .query(left, top, right, bottom)
@@ -616,6 +629,7 @@ impl EntityIndex {
     clippy::cast_possible_truncation,
     reason = "The loss of range and precision is acceptable."
 )]
+#[tracing::instrument(skip_all)]
 fn compute_bounds_index(lines: &[PathSeg]) -> StaticAABB2DIndex<f32> {
     let mut builder = StaticAABB2DIndexBuilder::<f32>::new(lines.len());
     for shape in lines.iter() {

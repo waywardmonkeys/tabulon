@@ -2512,6 +2512,7 @@ dependencies = [
  "libm",
  "parley",
  "peniko",
+ "tracing",
 ]
 
 [[package]]
@@ -2522,6 +2523,7 @@ dependencies = [
  "getrandom 0.3.1",
  "parley",
  "tabulon",
+ "tracing",
  "uuid",
 ]
 
@@ -2531,6 +2533,7 @@ version = "0.1.0"
 dependencies = [
  "parley",
  "tabulon",
+ "tracing",
  "vello",
 ]
 

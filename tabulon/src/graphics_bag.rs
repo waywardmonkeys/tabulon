@@ -161,6 +161,7 @@ impl GraphicsBag {
     // TODO: Consider finalizing transforms based on a dirty state immediately
     //       before rendering or picking.
     /// Update a set of transforms by pairs of `TransformHandle` and local `Affine`.
+    #[tracing::instrument(skip_all)]
     pub fn update_transforms(
         &mut self,
         pairs: impl IntoIterator<Item = (TransformHandle, Affine)>,
