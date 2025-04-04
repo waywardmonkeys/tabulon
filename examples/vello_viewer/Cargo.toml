@@ -9,6 +9,7 @@ publish = false
 
 [features]
 tracing-tracy = ["dep:tracing-tracy", "dep:tracy-client"]
+tracing-tracy-memory = ["tracing-tracy"]
 
 [dependencies]
 anyhow = "1.0.93"

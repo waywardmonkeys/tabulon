@@ -417,6 +417,11 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
     }
 }
 
+#[cfg(feature = "tracing-tracy-memory")]
+#[global_allocator]
+static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
+    tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
+
 fn main() -> Result<()> {
     let subscriber = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
