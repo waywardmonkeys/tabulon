@@ -18,7 +18,7 @@ env:
   # List of features that depend on the standard library and will be excluded from no_std checks.
   FEATURES_DEPENDING_ON_STD: "std,default"
   # List of features that need native code (no WebAssembly).
-  FEATURES_DEPENDING_ON_NATIVE: "tracing-tracy"
+  FEATURES_DEPENDING_ON_NATIVE: "tracing-tracy,tracing-tracy-memory"
 
 
 # Rationale
