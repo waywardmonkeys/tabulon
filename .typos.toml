@@ -8,6 +8,8 @@
 
 # Match Identifier - Case Sensitive
 [default.extend-identifiers]
+ACI = "ACI"
+aci_palette = "aci_palette"
 
 # Match Inside a Word - Case Insensitive
 [default.extend-words]

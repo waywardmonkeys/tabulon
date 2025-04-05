@@ -119,6 +119,12 @@ impl GraphicsBag {
         self.palette.get(usize::from(handle)).unwrap()
     }
 
+    /// Get a paint.
+    #[must_use]
+    pub fn get_paint_mut(&mut self, handle: PaintHandle) -> &mut FatPaint {
+        self.palette.get_mut(usize::from(handle)).unwrap()
+    }
+
     /// Update a paint.
     pub fn update_paint(&mut self, handle: PaintHandle, paint: FatPaint) {
         self.palette[handle.0 as usize] = paint;
