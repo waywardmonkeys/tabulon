@@ -5,6 +5,7 @@
 //! DXF viewer
 
 use anyhow::Result;
+use joto_constants::u64::{INCH, MICROMETER};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -13,8 +14,7 @@ use vello::kurbo::{
     Affine, ParamCurveExtrema, ParamCurveNearest, PathSeg, Point, Rect, Stroke, Vec2,
     DEFAULT_ACCURACY,
 };
-use vello::peniko::color::palette;
-use vello::peniko::Color;
+use vello::peniko::{color::palette, Brush, Color};
 use vello::util::{RenderContext, RenderSurface};
 use vello::{AaConfig, Renderer, RendererOptions, Scene};
 use winit::application::ApplicationHandler;
@@ -30,7 +30,7 @@ use tabulon_dxf::{EntityHandle, TDDrawing};
 use tabulon::{
     render_layer::RenderLayer,
     shape::{FatPaint, FatShape},
-    GraphicsBag, GraphicsItem,
+    GraphicsBag, GraphicsItem, PaintHandle,
 };
 
 extern crate alloc;
@@ -127,6 +127,8 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                 .create_render_surface(surface, size.width, size.height, present_mode)
         };
 
+        let scale_factor = window.scale_factor();
+
         let surface = pollster::block_on(surface_future).expect("Error creating surface");
 
         // Create a vello Renderer for the surface (using its device id).
@@ -154,8 +156,10 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
         update_transform(
             &mut self.drawing.graphics,
+            self.drawing.restroke_paints.clone(),
             self.view_transform,
             self.view_scale,
+            scale_factor,
         );
         self.scene.reset();
 
@@ -335,8 +339,10 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                 let reproject_started = Instant::now();
                 update_transform(
                     &mut self.drawing.graphics,
+                    self.drawing.restroke_paints.clone(),
                     self.view_transform,
                     self.view_scale,
+                    window.scale_factor(),
                 );
 
                 let tl = self.view_transform.inverse() * Point { x: 0., y: 0. };
@@ -439,7 +445,7 @@ fn main() -> Result<()> {
     subscriber.init();
 
     let drawing_load_started = Instant::now();
-    let drawing = tabulon_dxf::load_file_default_layers(
+    let mut drawing = tabulon_dxf::load_file_default_layers(
         std::env::args()
             .next_back()
             .expect("Please provide a path in the last argument."),
@@ -450,6 +456,8 @@ fn main() -> Result<()> {
     eprintln!("Drawing took {drawing_load_duration:?} to load and translate.");
 
     let picking_index = EntityIndex::new(&drawing);
+
+    light_adapt_paints(&mut drawing.graphics, drawing.restroke_paints.clone());
 
     {
         eprintln!(
@@ -472,6 +480,13 @@ fn main() -> Result<()> {
                 })
                 .flat_map(|s| s.to_path().into_iter())
                 .count(),
+        );
+        let linewidths: BTreeSet<u64> = drawing.restroke_paints.iter().map(|(w, _h)| *w).collect();
+        eprintln!(
+            "There are {} unique linewidths, between {} µm and {} µm.",
+            linewidths.len(),
+            linewidths.first().unwrap() / MICROMETER,
+            linewidths.last().unwrap() / MICROMETER,
         );
     }
 
@@ -521,8 +536,17 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
 }
 
 /// Update the transform/scale in all the items in a `GraphicsBag`.
+///
+/// This also adapts line widths from the drawing so they are the correct
+/// size after scaling.
 #[tracing::instrument(skip_all)]
-fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
+fn update_transform(
+    graphics: &mut GraphicsBag,
+    restroke_paints: Arc<[(u64, PaintHandle)]>,
+    transform: Affine,
+    view_scale: f64,
+    scale_factor: f64,
+) {
     // Update root transform.
     graphics.update_transform(Default::default(), transform);
 
@@ -531,11 +555,33 @@ fn update_transform(graphics: &mut GraphicsBag, transform: Affine, scale: f64) {
         Default::default(),
         FatPaint {
             // Unfortunately, post-transform stroke widths are not supported.
-            stroke: Stroke::new(1.0 / scale),
+            stroke: Stroke::new(1.0 / view_scale),
             stroke_paint: Some(Color::BLACK.into()),
             fill_paint: None,
         },
     );
+
+    let px = INCH as f64 / (96_f64 * scale_factor);
+
+    for (stroke_width, h) in restroke_paints.iter() {
+        let pxw = *stroke_width as f64 / px;
+        let p = graphics.get_paint_mut(*h);
+        p.stroke = Stroke::new(pxw / view_scale);
+    }
+}
+
+/// Light adapt paints.
+///
+/// The ACI palette and drawings using it assume a black background,
+/// this adapts colors to have a reasonable degree of contrast for the
+/// time being, until a more permanent solution is found.
+fn light_adapt_paints(graphics: &mut GraphicsBag, restroke_paints: Arc<[(u64, PaintHandle)]>) {
+    for (_, h) in restroke_paints.iter() {
+        let p = graphics.get_paint_mut(*h);
+        if let Some(Brush::Solid(c)) = p.stroke_paint {
+            p.stroke_paint = Some(Brush::Solid(c.map_lightness(|x| 1.2 - x)));
+        }
+    }
 }
 
 use static_aabb2d_index::{StaticAABB2DIndex, StaticAABB2DIndexBuilder};

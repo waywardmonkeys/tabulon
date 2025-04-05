@@ -1088,6 +1088,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "joto_constants"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c05641f156b472e4f4279520c98f703fc618438958ba52658e97a8be3f03efd5"
+
+[[package]]
 name = "jpeg-decoder"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2521,6 +2527,7 @@ version = "0.1.0"
 dependencies = [
  "dxf",
  "getrandom 0.3.1",
+ "joto_constants",
  "parley",
  "tabulon",
  "tracing",
@@ -2904,6 +2911,7 @@ name = "vello_viewer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "joto_constants",
  "pollster",
  "static_aabb2d_index",
  "tabulon",

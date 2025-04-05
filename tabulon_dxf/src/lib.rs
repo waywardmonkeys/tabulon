@@ -13,9 +13,10 @@ use tabulon::{
     render_layer::RenderLayer,
     shape::{AnyShape, FatPaint, FatShape},
     text::{AttachmentPoint, FatText},
-    DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle,
+    DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle, PaintHandle,
 };
 
+use joto_constants::u64::MICROMETER;
 use parley::{Alignment, StyleSet};
 
 extern crate alloc;
@@ -28,6 +29,9 @@ use alloc::{
 use std::path::Path;
 
 use core::num::NonZeroU64;
+
+mod aci_palette;
+use aci_palette::ACI;
 
 /// A valid handle for an [`Entity`](dxf::entities::Entity) present in the drawing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -277,6 +281,11 @@ pub struct TDDrawing {
     pub layer_names: BTreeMap<LayerHandle, sync::Arc<str>>,
     /// Drawing information object.
     pub info: DrawingInfo,
+    /// Paints that need stroke widths computed relative to view.
+    ///
+    /// Format is pairs of physical stroke widths with the target `PaintHandle`.
+    /// Physical widths are expressed in (iota)[`joto_constants::u64::IOTA`].
+    pub restroke_paints: sync::Arc<[(u64, PaintHandle)]>,
 }
 
 use parley::{FontStyle, FontWeight, FontWidth, GenericFamily, StyleProperty};
@@ -418,6 +427,9 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         )
         .collect();
 
+    // Paints keyed on concrete rgba color, and concrete line width (in iotas).
+    let mut paints: BTreeMap<(u32, u64), PaintHandle> = BTreeMap::new();
+
     for e in drawing.entities() {
         if !e.common.is_visible
             || !(e.common.layer.is_empty() || visible_layers.contains(e.common.layer.as_str()))
@@ -427,6 +439,69 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
 
         let eh = EntityHandle(NonZeroU64::new(e.common.handle.0).unwrap());
         let lh = handle_for_layer_name[e.common.layer.as_str()];
+
+        let Some(dxf::DrawingItem::Layer(layer)) = drawing.item_by_handle(dxf::Handle(lh.0.get()))
+        else {
+            // LayerHandle is known valid at this point.
+            unreachable!();
+        };
+
+        // Get or create the appropriate PaintHandle for this entity.
+        let entity_paint = {
+            // Resolve color.
+
+            let opaque_color = if e.common.color.is_by_entity() {
+                e.common.color_24_bit as u32
+            } else if e.common.color.is_by_layer() {
+                if let Some(i) = layer.color.index() {
+                    ACI[i as usize]
+                } else {
+                    u32::MAX
+                }
+            } else {
+                u32::MAX
+            };
+            let combined_color =
+                (opaque_color << 8) | (0xFF - (e.common.transparency as u32 & 0xFF));
+
+            // Resolve line width.
+
+            const LWDEFAULT: u64 = 250 * MICROMETER;
+
+            let lwconcrete = match e.common.lineweight_enum_value {
+                -3 => LWDEFAULT,
+                // BYLAYER.
+                -2 => {
+                    if layer.line_weight.raw_value() <= 0 {
+                        // BYLAYER and BYBLOCK are both meaningless in a layer,
+                        // therefore, use the default for all enumerations.
+                        LWDEFAULT
+                    } else {
+                        layer.line_weight.raw_value() as u64 * 10 * MICROMETER
+                    }
+                }
+                // BYBLOCK Should not occur at the entity level, use default.
+                -1 => LWDEFAULT,
+                // Invalid enumerations, use default.
+                i if i <= 0 => LWDEFAULT,
+                i => i as u64 * 10 * MICROMETER,
+            };
+
+            let r = ((combined_color >> 24) & 0xFF) as u8;
+            let g = ((combined_color >> 16) & 0xFF) as u8;
+            let b = ((combined_color >> 8) & 0xFF) as u8;
+            let a = (combined_color & 0xFF) as u8;
+
+            *paints
+                .entry((combined_color, lwconcrete))
+                .or_insert_with(|| {
+                    // At first these do not have stroke width, this needs to be set afterward.
+                    gb.register_paint(FatPaint {
+                        stroke_paint: Some(Color::from_rgba8(r, g, b, a).into()),
+                        ..Default::default()
+                    })
+                })
+        };
 
         let mut push_item = |item: GraphicsItem| {
             let ih = rl.push_with_bag(&mut gb, item);
@@ -464,6 +539,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     push_item(
                         FatShape {
                             subshapes: sync::Arc::from([lines.into()]),
+                            paint: entity_paint,
                             ..Default::default()
                         }
                         .into(),
@@ -636,6 +712,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     push_item(
                         FatShape {
                             subshapes: sync::Arc::from([s]),
+                            paint: entity_paint,
                             ..Default::default()
                         }
                         .into(),
@@ -645,6 +722,9 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         }
     }
 
+    let restroke_paints: Vec<(u64, PaintHandle)> =
+        paints.iter().map(|((_, w), h)| (*w, *h)).collect();
+
     Ok(TDDrawing {
         graphics: gb,
         render_layer: rl,
@@ -653,6 +733,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         enabled_layers,
         layer_names,
         info: DrawingInfo::new(drawing),
+        restroke_paints: sync::Arc::from(restroke_paints.as_slice()),
     })
 }
 
