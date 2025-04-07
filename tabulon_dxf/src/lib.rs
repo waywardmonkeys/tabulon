@@ -430,6 +430,11 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
     // Paints keyed on concrete rgba color, and concrete line width (in iotas).
     let mut paints: BTreeMap<(u32, u64), PaintHandle> = BTreeMap::new();
 
+    let layers: BTreeMap<LayerHandle, &dxf::tables::Layer> = drawing
+        .layers()
+        .map(|l| (LayerHandle(NonZeroU64::new(l.handle.0).unwrap()), l))
+        .collect();
+
     for e in drawing.entities() {
         if !e.common.is_visible
             || !(e.common.layer.is_empty() || visible_layers.contains(e.common.layer.as_str()))
@@ -440,11 +445,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         let eh = EntityHandle(NonZeroU64::new(e.common.handle.0).unwrap());
         let lh = handle_for_layer_name[e.common.layer.as_str()];
 
-        let Some(dxf::DrawingItem::Layer(layer)) = drawing.item_by_handle(dxf::Handle(lh.0.get()))
-        else {
-            // LayerHandle is known valid at this point.
-            unreachable!();
-        };
+        let layer = layers[&lh];
 
         // Get or create the appropriate PaintHandle for this entity.
         let entity_paint = {
