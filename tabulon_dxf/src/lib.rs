@@ -349,17 +349,69 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         })
         .collect();
 
-    // FIXME: It's conceivable that a BLOCK may have an INSERT so
-    //        we should figure out something sane to do with that.
-    let blocks: BTreeMap<&str, Vec<AnyShape>> = drawing
-        .blocks()
-        .map(|b| {
-            (
-                b.name.as_str(),
-                b.entities.iter().filter_map(shape_from_entity).collect(),
-            )
-        })
-        .collect();
+    let mut blocks: BTreeMap<&str, Vec<AnyShape>> = BTreeMap::new();
+    {
+        // Blocks that depend on another block which is not realized.
+        let mut unresolved_blocks: Vec<&dxf::Block> = drawing.blocks().collect();
+        let mut there_is_absolutely_no_hope = false;
+        while !unresolved_blocks.is_empty() && !there_is_absolutely_no_hope {
+            // I acknowledge that this is technically not very efficient in some cases
+            // but I am too lazy to build a DAG here, and rarely will it matter.
+            there_is_absolutely_no_hope = true;
+            'block: for b in unresolved_blocks.iter() {
+                let mut blines: Vec<AnyShape> = vec![];
+                for e in b.entities.iter() {
+                    match e.specific {
+                        // Try the next block if this one depends on an unresolved block.
+                        EntityType::Insert(dxf::entities::Insert { ref name, .. })
+                            if !blocks.contains_key(name.as_str()) =>
+                        {
+                            continue 'block;
+                        }
+                        EntityType::Insert(ref ins) => {
+                            // FIXME: currently only support viewing from +Z.
+                            if ins.extrusion_direction.z != 1.0 {
+                                continue;
+                            }
+
+                            if let Some(b) = blocks.get(ins.name.as_str()) {
+                                let mut lines = BezPath::new();
+                                let base_transform = Affine::scale_non_uniform(
+                                    ins.x_scale_factor,
+                                    ins.y_scale_factor,
+                                );
+                                let location = point_from_dxf_point(&ins.location);
+                                for i in 0..ins.row_count {
+                                    for j in 0..ins.column_count {
+                                        let transform = base_transform
+                                            .then_translate(Vec2::new(
+                                                j as f64 * ins.column_spacing,
+                                                i as f64 * ins.row_spacing,
+                                            ))
+                                            .then_rotate(-ins.rotation.to_radians())
+                                            .then_translate(location.to_vec2());
+                                        for s in b {
+                                            lines.extend(s.transform(transform).to_path().iter());
+                                        }
+                                    }
+                                }
+
+                                blines.push(lines.into());
+                            }
+                        }
+                        _ => {
+                            if let Some(s) = shape_from_entity(e) {
+                                blines.push(s);
+                            }
+                        }
+                    }
+                }
+                there_is_absolutely_no_hope = false;
+                blocks.insert(b.name.as_str(), blines);
+            }
+            unresolved_blocks.retain(|b| !blocks.contains_key(b.name.as_str()));
+        }
+    }
 
     let styles: BTreeMap<&str, StyleSet<Option<Color>>> = drawing
         .styles()
