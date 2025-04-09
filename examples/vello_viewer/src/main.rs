@@ -25,12 +25,12 @@ use winit::window::Window;
 
 use vello::wgpu;
 
-use tabulon_dxf::{EntityHandle, TDDrawing};
+use tabulon_dxf::{EntityHandle, RestrokePaint, TDDrawing};
 
 use tabulon::{
     render_layer::RenderLayer,
     shape::{FatPaint, FatShape},
-    GraphicsBag, GraphicsItem, PaintHandle,
+    GraphicsBag, GraphicsItem,
 };
 
 extern crate alloc;
@@ -481,7 +481,7 @@ fn main() -> Result<()> {
                 .flat_map(|s| s.to_path().into_iter())
                 .count(),
         );
-        let linewidths: BTreeSet<u64> = drawing.restroke_paints.iter().map(|(w, _h)| *w).collect();
+        let linewidths: BTreeSet<u64> = drawing.restroke_paints.iter().map(|r| r.weight).collect();
         eprintln!(
             "There are {} unique linewidths, between {} µm and {} µm.",
             linewidths.len(),
@@ -542,7 +542,7 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
 #[tracing::instrument(skip_all)]
 fn update_transform(
     graphics: &mut GraphicsBag,
-    restroke_paints: Arc<[(u64, PaintHandle)]>,
+    restroke_paints: Arc<[RestrokePaint]>,
     transform: Affine,
     view_scale: f64,
     scale_factor: f64,
@@ -561,15 +561,11 @@ fn update_transform(
         },
     );
 
-    let px = INCH as f64 / (96_f64 * scale_factor);
+    #[allow(clippy::cast_possible_truncation, reason = "Deliberate truncation.")]
+    let pixel_pitch = INCH / (96_f64 * scale_factor).trunc() as u64;
 
-    for (stroke_width, h) in restroke_paints.iter() {
-        // The expectation is that there is a minimum plotted line width of
-        // one display pixel.
-        // See: https://help.autodesk.com/view/ACD/2025/ENU/?guid=GUID-4B33ACD3-F6DD-4CB5-8C55-D6D0D7130905
-        let pxw = (*stroke_width as f64 / px).max(1.0);
-        let p = graphics.get_paint_mut(*h);
-        p.stroke = Stroke::new(pxw / view_scale);
+    for r in restroke_paints.iter() {
+        r.adapt(graphics, pixel_pitch, view_scale, 1.0, f64::INFINITY);
     }
 }
 
@@ -578,9 +574,9 @@ fn update_transform(
 /// The ACI palette and drawings using it assume a black background,
 /// this adapts colors to have a reasonable degree of contrast for the
 /// time being, until a more permanent solution is found.
-fn light_adapt_paints(graphics: &mut GraphicsBag, restroke_paints: Arc<[(u64, PaintHandle)]>) {
-    for (_, h) in restroke_paints.iter() {
-        let p = graphics.get_paint_mut(*h);
+fn light_adapt_paints(graphics: &mut GraphicsBag, restroke_paints: Arc<[RestrokePaint]>) {
+    for RestrokePaint { handle, .. } in restroke_paints.iter() {
+        let p = graphics.get_paint_mut(*handle);
         if let Some(Brush::Solid(c)) = p.stroke_paint {
             p.stroke_paint = Some(Brush::Solid(c.map_lightness(|x| 1.2 - x)));
         }

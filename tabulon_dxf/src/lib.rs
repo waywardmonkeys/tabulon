@@ -7,7 +7,9 @@ use dxf::{entities::EntityType, Drawing, DxfResult};
 
 use tabulon::{
     peniko::{
-        kurbo::{Affine, Arc, BezPath, Circle, Line, PathEl, Point, Vec2, DEFAULT_ACCURACY},
+        kurbo::{
+            Affine, Arc, BezPath, Circle, Line, PathEl, Point, Stroke, Vec2, DEFAULT_ACCURACY,
+        },
         Color,
     },
     render_layer::RenderLayer,
@@ -261,6 +263,57 @@ impl DrawingInfo {
     }
 }
 
+/// Adapt line weights to [`FatPaint`] strokes for rendering.
+#[derive(Debug, Clone, Copy)]
+pub struct RestrokePaint {
+    /// Physical line weight expressed in [iota][`joto_constants::u64::IOTA`].
+    pub weight: u64,
+    /// The target [`PaintHandle`].
+    pub handle: PaintHandle,
+}
+
+impl RestrokePaint {
+    /// Adapt line weight to a device.
+    ///
+    /// For legacy reasons many lines in drawings are 0 weight.
+    /// The expectation of interactive applications is that lines with 0 weight are
+    /// displayed as one display pixel wide, and although ambiguous, it seems that
+    /// all lines are expected to be displayed at least one display pixel wide.
+    /// Therefore, `min_stroke` should be the width of a 1 device pixel stroke at
+    /// default scale.
+    ///
+    /// For modern printing, you will need to decide on a `min_stroke` that makes
+    /// sense for your printer, assumptions in drawings come from robotic plotters.
+    ///
+    /// For reference, see the [AutoCAD documentation for line weights][0].
+    ///
+    /// * `graphics` — the [`GraphicsBag`] that contains the paints to be updated.
+    /// * `pitch` — Physical pitch of a 1.0 stroke, generally 1 display pixel, in [iota][`joto_constants::u64::IOTA`].
+    /// * `view_scale` — uniform scale of the drawing view transform.
+    /// * `min_stroke` — minimum stroke width, typically 1 device pixel.
+    /// * `max_stroke` — maximum stroke width, useful for plotters.
+    ///
+    /// [0]: https://help.autodesk.com/view/ACD/2025/ENU/?guid=GUID-4B33ACD3-F6DD-4CB5-8C55-D6D0D7130905
+    pub fn adapt(
+        &self,
+        graphics: &mut GraphicsBag,
+        pitch: u64,
+        view_scale: f64,
+        min_stroke: f64,
+        max_stroke: f64,
+    ) {
+        let pxw = (self.weight as f64 / pitch as f64).clamp(min_stroke, max_stroke);
+        let p = graphics.get_paint_mut(self.handle);
+        p.stroke = Stroke::new(pxw / view_scale);
+    }
+}
+
+impl From<(u64, PaintHandle)> for RestrokePaint {
+    fn from((weight, handle): (u64, PaintHandle)) -> Self {
+        Self { weight, handle }
+    }
+}
+
 /// Tabulon data for the drawing.
 #[allow(
     missing_debug_implementations,
@@ -283,20 +336,8 @@ pub struct TDDrawing {
     pub info: DrawingInfo,
     /// Paints that need stroke widths computed relative to view.
     ///
-    /// Format is pairs of physical line weights with the target `PaintHandle`.
-    /// Physical weights are expressed in (iota)[`joto_constants::u64::IOTA`].
-    ///
-    /// For legacy reasons many lines in drawings are 0 weight.
-    /// The expectation interactive applications is that lines with 0 weight are
-    /// displayed as one display pixel wide, and although ambiguous, it seems that
-    /// all lines are expected to be displayed at least one display pixel wide.
-    /// For modern printing, you will need to decide on a default physical weight, or
-    /// many lines will be invisible.
-    ///
-    /// For reference, see the [AutoCAD documentation for lineweights][0].
-    ///
-    /// [0]: https://help.autodesk.com/view/ACD/2025/ENU/?guid=GUID-4B33ACD3-F6DD-4CB5-8C55-D6D0D7130905
-    pub restroke_paints: sync::Arc<[(u64, PaintHandle)]>,
+    /// See [`RestrokePaint`].
+    pub restroke_paints: sync::Arc<[RestrokePaint]>,
 }
 
 use parley::{FontStyle, FontWeight, FontWidth, GenericFamily, StyleProperty};
@@ -784,8 +825,8 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         }
     }
 
-    let restroke_paints: Vec<(u64, PaintHandle)> =
-        paints.iter().map(|((_, w), h)| (*w, *h)).collect();
+    let restroke_paints: Vec<RestrokePaint> =
+        paints.iter().map(|((_, w), h)| (*w, *h).into()).collect();
 
     Ok(TDDrawing {
         graphics: gb,
