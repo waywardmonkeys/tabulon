@@ -564,7 +564,10 @@ fn update_transform(
     let px = INCH as f64 / (96_f64 * scale_factor);
 
     for (stroke_width, h) in restroke_paints.iter() {
-        let pxw = *stroke_width as f64 / px;
+        // The expectation is that there is a minimum plotted line width of
+        // one display pixel.
+        // See: https://help.autodesk.com/view/ACD/2025/ENU/?guid=GUID-4B33ACD3-F6DD-4CB5-8C55-D6D0D7130905
+        let pxw = (*stroke_width as f64 / px).max(1.0);
         let p = graphics.get_paint_mut(*h);
         p.stroke = Stroke::new(pxw / view_scale);
     }

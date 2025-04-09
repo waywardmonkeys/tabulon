@@ -283,8 +283,19 @@ pub struct TDDrawing {
     pub info: DrawingInfo,
     /// Paints that need stroke widths computed relative to view.
     ///
-    /// Format is pairs of physical stroke widths with the target `PaintHandle`.
-    /// Physical widths are expressed in (iota)[`joto_constants::u64::IOTA`].
+    /// Format is pairs of physical line weights with the target `PaintHandle`.
+    /// Physical weights are expressed in (iota)[`joto_constants::u64::IOTA`].
+    ///
+    /// For legacy reasons many lines in drawings are 0 weight.
+    /// The expectation interactive applications is that lines with 0 weight are
+    /// displayed as one display pixel wide, and although ambiguous, it seems that
+    /// all lines are expected to be displayed at least one display pixel wide.
+    /// For modern printing, you will need to decide on a default physical weight, or
+    /// many lines will be invisible.
+    ///
+    /// For reference, see the [AutoCAD documentation for lineweights][0].
+    ///
+    /// [0]: https://help.autodesk.com/view/ACD/2025/ENU/?guid=GUID-4B33ACD3-F6DD-4CB5-8C55-D6D0D7130905
     pub restroke_paints: sync::Arc<[(u64, PaintHandle)]>,
 }
 
@@ -535,8 +546,6 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 }
                 // BYBLOCK Should not occur at the entity level, use default.
                 -1 => LWDEFAULT,
-                // Invalid enumerations, use default.
-                i if i <= 0 => LWDEFAULT,
                 i => i as u64 * 10 * MICROMETER,
             };
 
