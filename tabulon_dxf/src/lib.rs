@@ -349,6 +349,21 @@ fn style_size_is_zero(s: &StyleSet<Option<Color>>) -> bool {
         .is_none_or(|x| matches!(x, StyleProperty::FontSize(0_f32)))
 }
 
+/// Recover color enum value from [`dxf::Color`] as it is currently not in the API.
+fn recover_color_enum(c: &dxf::Color) -> i16 {
+    if c.is_by_layer() {
+        256
+    } else if c.is_by_entity() {
+        257
+    } else if c.is_by_block() {
+        0
+    } else if let Some(index) = c.index() {
+        index as i16
+    } else {
+        -1
+    }
+}
+
 /// Load a DXF from a path, and convert the entities in its enabled layers to Tabulon [`AnyShape`]s.
 #[cfg(feature = "std")]
 #[tracing::instrument(skip_all)]
@@ -401,7 +416,12 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         })
         .collect();
 
-    let mut blocks: BTreeMap<&str, Vec<AnyShape>> = BTreeMap::new();
+    let layers: BTreeMap<LayerHandle, &dxf::tables::Layer> = drawing
+        .layers()
+        .map(|l| (LayerHandle(NonZeroU64::new(l.handle.0).unwrap()), l))
+        .collect();
+
+    let mut blocks: BTreeMap<&str, Vec<(i16, i16, BezPath)>> = BTreeMap::new();
     {
         // Blocks that depend on another block which is not realized.
         let mut unresolved_blocks: Vec<&dxf::Block> = drawing.blocks().collect();
@@ -411,8 +431,61 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
             // but I am too lazy to build a DAG here, and rarely will it matter.
             there_is_absolutely_no_hope = true;
             'block: for b in unresolved_blocks.iter() {
-                let mut blines: Vec<AnyShape> = vec![];
+                // Form up shapes with contiguous line weight and color.
+                let mut lines = BezPath::new();
+                // Chunk blocks by the combination of line weight and color.
+                // To retain drawing order, multiple chunks may be emitted for a single block.
+                let mut chunks: Vec<(i16, i16, BezPath)> = vec![];
+                if b.entities.is_empty() {
+                    blocks.insert(b.name.as_str(), chunks);
+                    continue;
+                }
+
+                let resolve_style = |lh: LayerHandle, lw: i16, ce: i16| {
+                    let layer = layers[&lh];
+                    let line_weight = if lw == -2 {
+                        if layer.line_weight.raw_value() < 0 {
+                            25_i16
+                        } else {
+                            layer.line_weight.raw_value()
+                        }
+                    } else {
+                        lw
+                    };
+                    let color = if ce == 256 {
+                        // BYLAYER: resolve to a palette value during block resolution.
+                        if let Some(i) = layer.color.index() {
+                            i as i16
+                        } else {
+                            // white if layer doesn't have a resolvable color.
+                            7_i16
+                        }
+                    } else {
+                        ce
+                    };
+
+                    (line_weight, color)
+                };
+
+                let mut cur_style = resolve_style(
+                    handle_for_layer_name[b.entities[0].common.layer.as_str()],
+                    b.entities[0].common.lineweight_enum_value,
+                    recover_color_enum(&b.entities[0].common.color),
+                );
+
                 for e in b.entities.iter() {
+                    let lh = handle_for_layer_name[e.common.layer.as_str()];
+                    let style = resolve_style(
+                        lh,
+                        e.common.lineweight_enum_value,
+                        recover_color_enum(&e.common.color),
+                    );
+                    if style != cur_style {
+                        chunks.push((cur_style.0, cur_style.1, lines));
+                        lines = BezPath::new();
+                        cur_style = style;
+                    }
+
                     match e.specific {
                         // Try the next block if this one depends on an unresolved block.
                         EntityType::Insert(dxf::entities::Insert { ref name, .. })
@@ -425,41 +498,66 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                             if ins.extrusion_direction.z != 1.0 {
                                 continue;
                             }
-
                             if let Some(b) = blocks.get(ins.name.as_str()) {
-                                let mut lines = BezPath::new();
                                 let base_transform = Affine::scale_non_uniform(
                                     ins.x_scale_factor,
                                     ins.y_scale_factor,
                                 );
                                 let location = point_from_dxf_point(&ins.location);
-                                for i in 0..ins.row_count {
-                                    for j in 0..ins.column_count {
-                                        let transform = base_transform
-                                            .then_translate(Vec2::new(
-                                                j as f64 * ins.column_spacing,
-                                                i as f64 * ins.row_spacing,
-                                            ))
-                                            .then_rotate(-ins.rotation.to_radians())
-                                            .then_translate(location.to_vec2());
-                                        for s in b {
-                                            lines.extend(s.transform(transform).to_path().iter());
-                                        }
-                                    }
+
+                                if !lines.is_empty() {
+                                    // Always push a chunk before an insert if not empty.
+                                    chunks.push((cur_style.0, cur_style.1, lines));
                                 }
 
-                                blines.push(lines.into());
+                                // Push arrayed/transformed versions of each chunk in the block.
+                                for (lw, ce, clines) in b {
+                                    let local_linewidth = if *lw == -1 {
+                                        // BYBLOCK: inherit from this insert.
+                                        cur_style.0
+                                    } else {
+                                        // Other values are already realized in the chunk as
+                                        // either absolute widths, or the default width `-3`.
+                                        *lw
+                                    };
+                                    let local_color = if *ce == 0 {
+                                        // BYBLOCK: inherit from this insert.
+                                        cur_style.1
+                                    } else {
+                                        // Other values are already realized in the chunk.
+                                        *ce
+                                    };
+                                    lines = BezPath::new();
+                                    for i in 0..ins.row_count {
+                                        for j in 0..ins.column_count {
+                                            let transform = base_transform
+                                                .then_translate(Vec2::new(
+                                                    j as f64 * ins.column_spacing,
+                                                    i as f64 * ins.row_spacing,
+                                                ))
+                                                .then_rotate(-ins.rotation.to_radians())
+                                                .then_translate(location.to_vec2());
+                                            // Add the transformed instance to the new path.
+                                            lines.extend(transform * clines);
+                                        }
+                                    }
+                                    chunks.push((local_linewidth, local_color, lines));
+                                }
+                                lines = BezPath::new();
                             }
                         }
                         _ => {
                             if let Some(s) = shape_from_entity(e) {
-                                blines.push(s);
+                                lines.extend(s.to_path());
                             }
                         }
                     }
                 }
+                if !lines.is_empty() {
+                    chunks.push((cur_style.0, cur_style.1, lines));
+                }
                 there_is_absolutely_no_hope = false;
-                blocks.insert(b.name.as_str(), blines);
+                blocks.insert(b.name.as_str(), chunks);
             }
             unresolved_blocks.retain(|b| !blocks.contains_key(b.name.as_str()));
         }
@@ -534,11 +632,6 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
     // Paints keyed on concrete rgba color, and concrete line width (in iotas).
     let mut paints: BTreeMap<(u32, u64), PaintHandle> = BTreeMap::new();
 
-    let layers: BTreeMap<LayerHandle, &dxf::tables::Layer> = drawing
-        .layers()
-        .map(|l| (LayerHandle(NonZeroU64::new(l.handle.0).unwrap()), l))
-        .collect();
-
     for e in drawing.entities() {
         if !e.common.is_visible
             || !(e.common.layer.is_empty() || visible_layers.contains(e.common.layer.as_str()))
@@ -551,29 +644,32 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
 
         let layer = layers[&lh];
 
-        // Get or create the appropriate PaintHandle for this entity.
-        let entity_paint = {
+        let mut resolve_paint = |gb: &mut GraphicsBag, lw: i16, c: i16| {
             // Resolve color.
-
-            let opaque_color = if e.common.color.is_by_entity() {
-                e.common.color_24_bit as u32
-            } else if e.common.color.is_by_layer() {
-                if let Some(i) = layer.color.index() {
-                    ACI[i as usize]
-                } else {
-                    u32::MAX
+            let opaque_color = match c {
+                // BYENTITY
+                257 => e.common.color_24_bit as u32,
+                // BYLAYER
+                256 => {
+                    if let Some(i) = layer.color.index() {
+                        ACI[i as usize]
+                    } else {
+                        u32::MAX
+                    }
                 }
-            } else {
-                u32::MAX
+                // Indexed colors.
+                1..=255 => ACI[c as usize],
+                // Other values generally not valid in this context.
+                _ => u32::MAX,
             };
             let combined_color =
                 (opaque_color << 8) | (0xFF - (e.common.transparency as u32 & 0xFF));
 
-            // Resolve line width.
-
+            /// Default line weight.
             const LWDEFAULT: u64 = 250 * MICROMETER;
 
-            let lwconcrete = match e.common.lineweight_enum_value {
+            // Resolve line width.
+            let lwconcrete = match lw {
                 -3 => LWDEFAULT,
                 // BYLAYER.
                 -2 => {
@@ -606,8 +702,15 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 })
         };
 
-        let mut push_item = |item: GraphicsItem| {
-            let ih = rl.push_with_bag(&mut gb, item);
+        // Get or create the appropriate PaintHandle for this entity.
+        let entity_paint = resolve_paint(
+            &mut gb,
+            e.common.lineweight_enum_value,
+            recover_color_enum(&e.common.color),
+        );
+
+        let mut push_item = |gb: &mut GraphicsBag, item: GraphicsItem| {
+            let ih = rl.push_with_bag(gb, item);
             item_entity_map.insert(ih, eh);
             entity_layer_map.insert(eh, lh);
         };
@@ -620,33 +723,50 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 }
 
                 if let Some(b) = blocks.get(ins.name.as_str()) {
-                    let mut lines = BezPath::new();
                     let base_transform =
                         Affine::scale_non_uniform(ins.x_scale_factor, ins.y_scale_factor);
                     let location = point_from_dxf_point(&ins.location);
-                    for i in 0..ins.row_count {
-                        for j in 0..ins.column_count {
-                            let transform = base_transform
-                                .then_translate(Vec2::new(
-                                    j as f64 * ins.column_spacing,
-                                    i as f64 * ins.row_spacing,
-                                ))
-                                .then_rotate(-ins.rotation.to_radians())
-                                .then_translate(location.to_vec2());
-                            for s in b {
-                                lines.extend(s.transform(transform).to_path().iter());
+
+                    for (lw, ce, clines) in b {
+                        let chunk_paint = resolve_paint(
+                            &mut gb,
+                            if *lw == -1 {
+                                // BYBLOCK: inherit from this insert.
+                                e.common.lineweight_enum_value
+                            } else {
+                                *lw
+                            },
+                            if *ce == 0 {
+                                // BYBLOCK: inherit from this insert.
+                                recover_color_enum(&e.common.color)
+                            } else {
+                                *ce
+                            },
+                        );
+                        let mut lines = BezPath::new();
+                        for i in 0..ins.row_count {
+                            for j in 0..ins.column_count {
+                                let transform = base_transform
+                                    .then_translate(Vec2::new(
+                                        j as f64 * ins.column_spacing,
+                                        i as f64 * ins.row_spacing,
+                                    ))
+                                    .then_rotate(-ins.rotation.to_radians())
+                                    .then_translate(location.to_vec2());
+
+                                lines.extend(transform * clines);
                             }
                         }
+                        push_item(
+                            &mut gb,
+                            FatShape {
+                                subshapes: sync::Arc::from([lines.into()]),
+                                paint: chunk_paint,
+                                ..Default::default()
+                            }
+                            .into(),
+                        );
                     }
-
-                    push_item(
-                        FatShape {
-                            subshapes: sync::Arc::from([lines.into()]),
-                            paint: entity_paint,
-                            ..Default::default()
-                        }
-                        .into(),
-                    );
                 }
             }
             #[allow(clippy::cast_possible_truncation, reason = "It doesn't matter")]
@@ -721,6 +841,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 };
 
                 push_item(
+                    &mut gb,
                     FatText {
                         transform: Default::default(),
                         text: nt.into(),
@@ -778,6 +899,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
 
                 #[allow(clippy::cast_possible_truncation, reason = "It doesn't matter")]
                 push_item(
+                    &mut gb,
                     FatText {
                         transform: Default::default(),
                         text: text.into(),
@@ -813,6 +935,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
             _ => {
                 if let Some(s) = shape_from_entity(e) {
                     push_item(
+                        &mut gb,
                         FatShape {
                             subshapes: sync::Arc::from([s]),
                             paint: entity_paint,
