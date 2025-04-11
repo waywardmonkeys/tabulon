@@ -579,6 +579,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "dxf_viewer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "joto_constants",
+ "pollster",
+ "static_aabb2d_index",
+ "tabulon",
+ "tabulon_dxf",
+ "tabulon_vello",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tracy",
+ "tracy-client",
+ "vello",
+ "winit",
+]
+
+[[package]]
 name = "either"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2902,25 +2921,6 @@ dependencies = [
  "pollster",
  "tabulon",
  "tabulon_vello",
- "vello",
- "winit",
-]
-
-[[package]]
-name = "vello_viewer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "joto_constants",
- "pollster",
- "static_aabb2d_index",
- "tabulon",
- "tabulon_dxf",
- "tabulon_vello",
- "tracing",
- "tracing-subscriber",
- "tracing-tracy",
- "tracy-client",
  "vello",
  "winit",
 ]
