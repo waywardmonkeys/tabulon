@@ -7,8 +7,9 @@
 use anyhow::Result;
 use joto_constants::u64::{INCH, MICROMETER};
 use std::num::NonZeroUsize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
 use std::time::Instant;
 use tracing_subscriber::prelude::*;
 use vello::kurbo::{
@@ -36,7 +37,7 @@ use tabulon::{
 
 extern crate alloc;
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 
 enum RenderState<'s> {
     /// `RenderSurface` and `Window` for active rendering.
@@ -97,6 +98,9 @@ struct TabulonDxfViewer<'s> {
 
     /// State related to viewing a specific drawing.
     viewer: Option<DrawingViewer>,
+
+    /// Handles for threads loading hovered files.
+    hover_threads: BTreeMap<PathBuf, thread::JoinHandle<Result<TDDrawing>>>,
 }
 
 impl ApplicationHandler for TabulonDxfViewer<'_> {
@@ -242,8 +246,26 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                     .resize_surface(surface, size.width, size.height);
             }
 
+            WindowEvent::HoveredFileCancelled => {
+                self.hover_threads.clear();
+            }
+
+            WindowEvent::HoveredFile(p) => {
+                let pb = p.clone();
+                if let Ok(jh) = thread::Builder::new().spawn(move || load_drawing(&pb)) {
+                    self.hover_threads.insert(p, jh);
+                }
+            }
+
             WindowEvent::DroppedFile(p) => {
-                let Ok(drawing) = load_drawing(&p) else {
+                let jh = self.hover_threads.remove(&p).unwrap_or_else(|| {
+                    let pb = p.clone();
+                    thread::Builder::new()
+                        .spawn(move || load_drawing(&pb))
+                        .unwrap()
+                });
+
+                let Ok(Ok(drawing)) = jh.join() else {
                     return;
                 };
 
@@ -590,6 +612,7 @@ fn main() -> Result<()> {
         scene: Scene::new(),
         tv_environment: Default::default(),
         viewer: None,
+        hover_threads: Default::default(),
     };
 
     let event_loop = EventLoop::new()?;
