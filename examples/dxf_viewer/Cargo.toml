@@ -1,5 +1,5 @@
 [package]
-name = "vello_viewer"
+name = "dxf_viewer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

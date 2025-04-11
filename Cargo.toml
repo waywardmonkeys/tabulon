@@ -4,8 +4,8 @@ members = [
     "tabulon",
     "tabulon_dxf",
     "tabulon_vello",
+    "examples/dxf_viewer",
     "examples/vello_simple",
-    "examples/vello_viewer",
 ]
 
 [workspace.package]
