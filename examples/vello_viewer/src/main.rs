@@ -7,6 +7,7 @@
 use anyhow::Result;
 use joto_constants::u64::{INCH, MICROMETER};
 use std::num::NonZeroUsize;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing_subscriber::prelude::*;
@@ -209,6 +210,32 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
             WindowEvent::Resized(size) => {
                 self.context
                     .resize_surface(surface, size.width, size.height);
+            }
+
+            WindowEvent::DroppedFile(p) => {
+                let Ok(drawing) = load_drawing(&p) else {
+                    return;
+                };
+
+                let picking_index = EntityIndex::new(&drawing);
+
+                self.drawing = drawing;
+                self.picking_index = picking_index;
+                let bounds = self.picking_index.bounds();
+
+                self.view_scale = (surface.config.height as f64 / bounds.size().height)
+                    .min(surface.config.width as f64 / bounds.size().width);
+
+                self.view_transform = Affine::translate(Vec2 {
+                    x: -bounds.min_x(),
+                    y: -bounds.min_y(),
+                })
+                .then_scale(self.view_scale);
+
+                self.pick = None;
+                self.gestures.primary_pan = false;
+
+                reproject = true;
             }
 
             WindowEvent::CursorMoved { position, .. } => {
@@ -423,39 +450,13 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
     }
 }
 
-#[cfg(feature = "tracing-tracy-memory")]
-#[global_allocator]
-static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
-    tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
-
-fn main() -> Result<()> {
-    let subscriber = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .with(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing::level_filters::LevelFilter::WARN.into())
-                .from_env_lossy(),
-        );
-
-    #[cfg(feature = "tracing-tracy")]
-    let tracy_layer = tracing_tracy::TracyLayer::default();
-    #[cfg(feature = "tracing-tracy")]
-    let subscriber = subscriber.with(tracy_layer);
-
-    subscriber.init();
-
+/// Load a drawing file into a drawing, and print some stats.
+fn load_drawing(p: impl AsRef<Path>) -> Result<TDDrawing> {
     let drawing_load_started = Instant::now();
-    let mut drawing = tabulon_dxf::load_file_default_layers(
-        std::env::args()
-            .next_back()
-            .expect("Please provide a path in the last argument."),
-    )
-    .expect("DXF file failed to load.");
+    let mut drawing = tabulon_dxf::load_file_default_layers(p)?;
 
     let drawing_load_duration = Instant::now().saturating_duration_since(drawing_load_started);
     eprintln!("Drawing took {drawing_load_duration:?} to load and translate.");
-
-    let picking_index = EntityIndex::new(&drawing);
 
     light_adapt_paints(&mut drawing.graphics, drawing.restroke_paints.clone());
 
@@ -489,6 +490,38 @@ fn main() -> Result<()> {
             linewidths.last().unwrap() / MICROMETER,
         );
     }
+
+    Ok(drawing)
+}
+
+#[cfg(feature = "tracing-tracy-memory")]
+#[global_allocator]
+static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
+    tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
+
+fn main() -> Result<()> {
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing::level_filters::LevelFilter::WARN.into())
+                .from_env_lossy(),
+        );
+
+    #[cfg(feature = "tracing-tracy")]
+    let tracy_layer = tracing_tracy::TracyLayer::default();
+    #[cfg(feature = "tracing-tracy")]
+    let subscriber = subscriber.with(tracy_layer);
+
+    subscriber.init();
+
+    let drawing = load_drawing(
+        std::env::args()
+            .next_back()
+            .expect("Please provide a path in the last argument."),
+    )?;
+
+    let picking_index = EntityIndex::new(&drawing);
 
     let mut app = SimpleVelloApp {
         context: RenderContext::new(),
