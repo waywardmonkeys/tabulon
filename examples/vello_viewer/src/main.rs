@@ -57,30 +57,14 @@ struct GestureState {
     cursor_pos: Point,
 }
 
-struct SimpleVelloApp<'s> {
-    /// The vello `RenderContext` which is a global context that lasts for the lifetime of the application.
-    context: RenderContext,
-
-    /// An array of renderers, one per wgpu device.
-    renderers: Vec<Option<Renderer>>,
-
-    /// The window, and also the surface while actively rendering.
-    state: RenderState<'s>,
-
-    /// A vello Scene which is a data structure which allows one to build up a description a scene to be
-    /// drawn (with paths, fills, images, text, etc) which is then passed to a renderer for rendering.
-    scene: Scene,
-
+struct DrawingViewer {
     /// `tabulon_dxf` drawing.
-    drawing: TDDrawing,
+    td: TDDrawing,
 
     /// Index of bounding boxes for hit testing.
     picking_index: EntityIndex,
     /// Which shape is closest to the cursor?
     pick: Option<EntityHandle>,
-
-    /// Tabulon Vello environment.
-    tv_environment: tabulon_vello::Environment,
 
     /// View transform of the drawing.
     view_transform: Affine,
@@ -94,7 +78,28 @@ struct SimpleVelloApp<'s> {
     gestures: GestureState,
 }
 
-impl ApplicationHandler for SimpleVelloApp<'_> {
+struct TabulonDxfViewer<'s> {
+    /// The vello `RenderContext` which is a global context that lasts for the lifetime of the application.
+    context: RenderContext,
+
+    /// An array of renderers, one per wgpu device.
+    renderers: Vec<Option<Renderer>>,
+
+    /// The window, and also the surface while actively rendering.
+    state: RenderState<'s>,
+
+    /// A vello Scene which is a data structure which allows one to build up a description a scene to be
+    /// drawn (with paths, fills, images, text, etc) which is then passed to a renderer for rendering.
+    scene: Scene,
+
+    /// Tabulon Vello environment.
+    tv_environment: tabulon_vello::Environment,
+
+    /// State related to viewing a specific drawing.
+    viewer: Option<DrawingViewer>,
+}
+
+impl ApplicationHandler for TabulonDxfViewer<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let RenderState::Suspended(cached_window) = &mut self.state else {
             return;
@@ -138,40 +143,65 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
         self.renderers[surface.dev_id]
             .get_or_insert_with(|| create_vello_renderer(&self.context, &surface));
 
+        if let Some(path_arg) = std::env::args().next_back() {
+            if let Ok(mut drawing) = load_drawing(&path_arg) {
+                let mut title = String::from("Tabulon DXF Viewer — ");
+                title.push_str(
+                    Path::new(&path_arg)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_str()
+                        .unwrap_or_default(),
+                );
+                window.set_title(&title);
+
+                let picking_index = EntityIndex::new(&drawing);
+                let bounds = picking_index.bounds();
+
+                let mut scene = Scene::default();
+                let view_scale = (size.height as f64 / bounds.size().height)
+                    .min(size.width as f64 / bounds.size().width);
+
+                let view_transform = Affine::translate(Vec2 {
+                    x: -bounds.min_x(),
+                    y: -bounds.min_y(),
+                })
+                .then_scale(view_scale);
+                update_transform(
+                    &mut drawing.graphics,
+                    drawing.restroke_paints.clone(),
+                    view_transform,
+                    view_scale,
+                    scale_factor,
+                );
+                self.scene.reset();
+
+                let encode_started = Instant::now();
+                self.tv_environment.add_render_layer_to_scene(
+                    &mut scene,
+                    &drawing.graphics,
+                    &drawing.render_layer,
+                );
+                let encode_duration = Instant::now().saturating_duration_since(encode_started);
+                eprintln!("Initial projection/encode took {encode_duration:?}");
+
+                self.viewer = Some(DrawingViewer {
+                    td: drawing,
+                    picking_index,
+                    view_scale,
+                    view_transform,
+                    gestures: GestureState::default(),
+                    defer_reprojection: false,
+                    pick: None,
+                });
+            };
+        }
+
         // Save the Window and Surface to a state variable.
         self.state = RenderState::Active {
             surface: Box::new(surface),
             window,
         };
-
-        let bounds = self.picking_index.bounds();
-
-        self.view_scale = (size.height as f64 / bounds.size().height)
-            .min(size.width as f64 / bounds.size().width);
-
-        self.view_transform = Affine::translate(Vec2 {
-            x: -bounds.min_x(),
-            y: -bounds.min_y(),
-        })
-        .then_scale(self.view_scale);
-
-        update_transform(
-            &mut self.drawing.graphics,
-            self.drawing.restroke_paints.clone(),
-            self.view_transform,
-            self.view_scale,
-            scale_factor,
-        );
-        self.scene.reset();
-
-        let encode_started = Instant::now();
-        self.tv_environment.add_render_layer_to_scene(
-            &mut self.scene,
-            &self.drawing.graphics,
-            &self.drawing.render_layer,
-        );
-        let encode_duration = Instant::now().saturating_duration_since(encode_started);
-        eprintln!("Initial projection/encode took {encode_duration:?}");
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -217,23 +247,36 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     return;
                 };
 
+                let mut title = String::from("Tabulon DXF Viewer — ");
+                title.push_str(
+                    p.file_name()
+                        .unwrap_or_default()
+                        .to_str()
+                        .unwrap_or_default(),
+                );
+                window.set_title(&title);
+
                 let picking_index = EntityIndex::new(&drawing);
+                let bounds = picking_index.bounds();
 
-                self.drawing = drawing;
-                self.picking_index = picking_index;
-                let bounds = self.picking_index.bounds();
-
-                self.view_scale = (surface.config.height as f64 / bounds.size().height)
+                let view_scale = (surface.config.height as f64 / bounds.size().height)
                     .min(surface.config.width as f64 / bounds.size().width);
 
-                self.view_transform = Affine::translate(Vec2 {
+                let view_transform = Affine::translate(Vec2 {
                     x: -bounds.min_x(),
                     y: -bounds.min_y(),
                 })
-                .then_scale(self.view_scale);
+                .then_scale(view_scale);
 
-                self.pick = None;
-                self.gestures.primary_pan = false;
+                self.viewer = Some(DrawingViewer {
+                    td: drawing,
+                    picking_index,
+                    view_scale,
+                    view_transform,
+                    pick: None,
+                    gestures: GestureState::default(),
+                    defer_reprojection: false,
+                });
 
                 reproject = true;
             }
@@ -244,33 +287,37 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     Point { x, y }
                 };
 
-                let dp = self.view_transform.inverse() * p;
+                let Some(viewer) = &mut self.viewer else {
+                    return;
+                };
 
-                if self.gestures.primary_pan {
-                    self.view_transform = self
+                let dp = viewer.view_transform.inverse() * p;
+
+                if viewer.gestures.primary_pan {
+                    viewer.view_transform = viewer
                         .view_transform
-                        .then_translate(-(self.gestures.cursor_pos - p));
+                        .then_translate(-(viewer.gestures.cursor_pos - p));
                     reproject = true;
                 } else {
                     let pick_dist: f64 = window.scale_factor() * 1.414;
                     let pick_started = Instant::now();
 
-                    let pick = self
+                    let pick = viewer
                         .picking_index
-                        .pick(dp, pick_dist * self.view_scale.recip());
+                        .pick(dp, pick_dist * viewer.view_scale.recip());
 
-                    if self.pick != pick {
+                    if viewer.pick != pick {
                         if let Some(pick) = pick {
                             let pick_duration =
                                 Instant::now().saturating_duration_since(pick_started);
-                            eprintln!("{:#?}", self.drawing.info.get_entity(pick).specific);
+                            eprintln!("{:#?}", viewer.td.info.get_entity(pick).specific);
                             eprintln!("Pick took {pick_duration:?}");
                         }
-                        self.pick = pick;
+                        viewer.pick = pick;
                         reproject = true;
                     }
                 }
-                self.gestures.cursor_pos = p;
+                viewer.gestures.cursor_pos = p;
             }
 
             WindowEvent::MouseInput {
@@ -278,32 +325,44 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                 button: winit::event::MouseButton::Left,
                 ..
             } => {
-                self.gestures.primary_pan = matches!(state, winit::event::ElementState::Pressed);
+                let Some(viewer) = &mut self.viewer else {
+                    return;
+                };
+
+                viewer.gestures.primary_pan = matches!(state, winit::event::ElementState::Pressed);
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
+                let Some(viewer) = &mut self.viewer else {
+                    return;
+                };
+
                 use winit::{dpi::PhysicalPosition, event::MouseScrollDelta::*};
                 let d = match delta {
                     LineDelta(_, y) => y as f64 * 0.1,
                     PixelDelta(PhysicalPosition::<f64> { y, .. }) => y * 0.05,
                 };
 
-                self.view_transform = self
+                viewer.view_transform = viewer
                     .view_transform
-                    .then_translate(-self.gestures.cursor_pos.to_vec2())
+                    .then_translate(-viewer.gestures.cursor_pos.to_vec2())
                     .then_scale(1. + d)
-                    .then_translate(self.gestures.cursor_pos.to_vec2());
-                self.view_scale *= 1. + d;
+                    .then_translate(viewer.gestures.cursor_pos.to_vec2());
+                viewer.view_scale *= 1. + d;
                 reproject = true;
             }
 
             WindowEvent::PinchGesture { delta: d, .. } => {
-                self.view_transform = self
+                let Some(viewer) = &mut self.viewer else {
+                    return;
+                };
+
+                viewer.view_transform = viewer
                     .view_transform
-                    .then_translate(-self.gestures.cursor_pos.to_vec2())
+                    .then_translate(-viewer.gestures.cursor_pos.to_vec2())
                     .then_scale(1. + d)
-                    .then_translate(self.gestures.cursor_pos.to_vec2());
-                self.view_scale *= 1. + d;
+                    .then_translate(viewer.gestures.cursor_pos.to_vec2());
+                viewer.view_scale *= 1. + d;
                 reproject = true;
             }
 
@@ -348,32 +407,39 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
 
                 device_handle.device.poll(wgpu::Maintain::Poll);
 
-                if self.defer_reprojection {
-                    reproject_deferred = true;
-                    self.defer_reprojection = false;
-                }
+                if let Some(viewer) = &self.viewer {
+                    if viewer.defer_reprojection {
+                        reproject_deferred = true;
+                    }
+                };
             }
             _ => {}
         }
 
         if reproject || reproject_deferred {
             tracing::info_span!("reproject").in_scope(|| {
-                if self.defer_reprojection {
+                let Some(viewer) = &mut self.viewer else {
+                    return;
+                };
+                if reproject_deferred {
+                    viewer.defer_reprojection = false;
+                }
+                if viewer.defer_reprojection {
                     return;
                 }
                 // direct requests for reprojection until after the next redraw is complete.
-                self.defer_reprojection = reproject;
+                viewer.defer_reprojection = reproject;
                 let reproject_started = Instant::now();
                 update_transform(
-                    &mut self.drawing.graphics,
-                    self.drawing.restroke_paints.clone(),
-                    self.view_transform,
-                    self.view_scale,
+                    &mut viewer.td.graphics,
+                    viewer.td.restroke_paints.clone(),
+                    viewer.view_transform,
+                    viewer.view_scale,
                     window.scale_factor(),
                 );
 
-                let tl = self.view_transform.inverse() * Point { x: 0., y: 0. };
-                let br = self.view_transform.inverse()
+                let tl = viewer.view_transform.inverse() * Point { x: 0., y: 0. };
+                let br = viewer.view_transform.inverse()
                     * Point {
                         x: surface.config.width as f64,
                         y: surface.config.height as f64,
@@ -384,36 +450,38 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     reason = "The loss of range and precision is acceptable."
                 )]
                 let visible =
-                    self.picking_index
+                    viewer
+                        .picking_index
                         .query(tl.x as f32, tl.y as f32, br.x as f32, br.y as f32);
 
-                let culled_render_layer = self.drawing.render_layer.filter(|ih| {
+                let culled_render_layer = viewer.td.render_layer.filter(|ih| {
                     // TODO: add functionality to measure text and include it in the culling pass.
                     !matches!(
-                        self.drawing.graphics.get(*ih),
+                        viewer.td.graphics.get(*ih),
                         Some(GraphicsItem::FatShape(..))
-                    ) || visible.contains(&self.drawing.item_entity_map[ih])
+                    ) || visible.contains(&viewer.td.item_entity_map[ih])
                 });
                 self.scene.reset();
                 self.tv_environment.add_render_layer_to_scene(
                     &mut self.scene,
-                    &self.drawing.graphics,
+                    &viewer.td.graphics,
                     &culled_render_layer,
                 );
 
-                if let Some(pick) = self.pick {
+                if let Some(pick) = viewer.pick {
                     let mut gb = GraphicsBag::default();
                     let mut rl = RenderLayer::default();
 
-                    gb.update_transform(Default::default(), self.view_transform);
+                    gb.update_transform(Default::default(), viewer.view_transform);
 
                     let paint = gb.register_paint(FatPaint {
-                        stroke: Stroke::new(1.414 / self.view_scale),
+                        stroke: Stroke::new(1.414 / viewer.view_scale),
                         stroke_paint: Some(palette::css::GOLDENROD.into()),
                         fill_paint: None,
                     });
 
-                    self.drawing
+                    viewer
+                        .td
                         .item_entity_map
                         .iter()
                         .filter(|(_ih, eh)| **eh == pick)
@@ -422,7 +490,7 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                                 transform,
                                 subshapes,
                                 ..
-                            })) = self.drawing.graphics.get(*ih)
+                            })) = viewer.td.graphics.get(*ih)
                             else {
                                 return;
                             };
@@ -515,27 +583,13 @@ fn main() -> Result<()> {
 
     subscriber.init();
 
-    let drawing = load_drawing(
-        std::env::args()
-            .next_back()
-            .expect("Please provide a path in the last argument."),
-    )?;
-
-    let picking_index = EntityIndex::new(&drawing);
-
-    let mut app = SimpleVelloApp {
+    let mut app = TabulonDxfViewer {
         context: RenderContext::new(),
         renderers: vec![],
         state: RenderState::Suspended(None),
         scene: Scene::new(),
-        drawing,
-        picking_index,
-        pick: None,
         tv_environment: Default::default(),
-        view_transform: Default::default(),
-        defer_reprojection: Default::default(),
-        view_scale: 1.0,
-        gestures: Default::default(),
+        viewer: None,
     };
 
     let event_loop = EventLoop::new()?;
@@ -548,9 +602,9 @@ fn main() -> Result<()> {
 /// Helper function that creates a Winit window and returns it (wrapped in an Arc for sharing between threads)
 fn create_winit_window(event_loop: &ActiveEventLoop) -> Arc<Window> {
     let attr = Window::default_attributes()
-        .with_inner_size(LogicalSize::new(1044, 800))
+        .with_inner_size(LogicalSize::new(960, 720))
         .with_resizable(true)
-        .with_title("Vello Shapes");
+        .with_title("Tabulon DXF Viewer");
     Arc::new(event_loop.create_window(attr).unwrap())
 }
 
