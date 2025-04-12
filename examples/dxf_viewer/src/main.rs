@@ -13,8 +13,7 @@ use std::thread;
 use std::time::Instant;
 use tracing_subscriber::prelude::*;
 use vello::kurbo::{
-    Affine, ParamCurveExtrema, ParamCurveNearest, PathSeg, Point, Rect, Stroke, Vec2,
-    DEFAULT_ACCURACY,
+    Affine, ParamCurveNearest, PathSeg, Point, Rect, Shape, Stroke, Vec2, DEFAULT_ACCURACY,
 };
 use vello::peniko::{color::palette, Brush, Color};
 use vello::util::{RenderContext, RenderSurface};
@@ -66,6 +65,9 @@ struct DrawingViewer {
     picking_index: EntityIndex,
     /// Which shape is closest to the cursor?
     pick: Option<EntityHandle>,
+
+    /// Index of bounding boxes for culling texts.
+    text_cull_index: TextCullIndex,
 
     /// View transform of the drawing.
     view_transform: Affine,
@@ -162,6 +164,8 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                 let picking_index = EntityIndex::new(&drawing);
                 let bounds = picking_index.bounds();
 
+                let text_cull_index = TextCullIndex::new(&mut self.tv_environment, &drawing);
+
                 let mut scene = Scene::default();
                 let view_scale = (size.height as f64 / bounds.size().height)
                     .min(size.width as f64 / bounds.size().width);
@@ -194,6 +198,7 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                     picking_index,
                     view_scale,
                     view_transform,
+                    text_cull_index,
                     gestures: GestureState::default(),
                     defer_reprojection: false,
                     pick: None,
@@ -281,6 +286,8 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                 let picking_index = EntityIndex::new(&drawing);
                 let bounds = picking_index.bounds();
 
+                let text_cull_index = TextCullIndex::new(&mut self.tv_environment, &drawing);
+
                 let view_scale = (surface.config.height as f64 / bounds.size().height)
                     .min(surface.config.width as f64 / bounds.size().width);
 
@@ -295,6 +302,7 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                     picking_index,
                     view_scale,
                     view_transform,
+                    text_cull_index,
                     pick: None,
                     gestures: GestureState::default(),
                     defer_reprojection: false,
@@ -476,13 +484,30 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                         .picking_index
                         .query(tl.x as f32, tl.y as f32, br.x as f32, br.y as f32);
 
-                let culled_render_layer = viewer.td.render_layer.filter(|ih| {
-                    // TODO: add functionality to measure text and include it in the culling pass.
-                    !matches!(
-                        viewer.td.graphics.get(*ih),
-                        Some(GraphicsItem::FatShape(..))
-                    ) || visible.contains(&viewer.td.item_entity_map[ih])
-                });
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "The loss of range and precision is acceptable."
+                )]
+                let visible_text = viewer.text_cull_index.query(
+                    tl.x as f32,
+                    tl.y as f32,
+                    br.x as f32,
+                    br.y as f32,
+                );
+
+                let culled_render_layer =
+                    viewer
+                        .td
+                        .render_layer
+                        .filter(|ih| match viewer.td.graphics.get(*ih) {
+                            Some(GraphicsItem::FatShape(..)) => {
+                                visible.contains(&viewer.td.item_entity_map[ih])
+                            }
+                            Some(GraphicsItem::FatText(..)) => {
+                                visible_text.contains(&viewer.td.item_entity_map[ih])
+                            }
+                            _ => false,
+                        });
                 self.scene.reset();
                 self.tv_environment.add_render_layer_to_scene(
                     &mut self.scene,
@@ -793,7 +818,7 @@ impl EntityIndex {
 fn compute_bounds_index(lines: &[PathSeg]) -> StaticAABB2DIndex<f32> {
     let mut builder = StaticAABB2DIndexBuilder::<f32>::new(lines.len());
     for shape in lines.iter() {
-        let bbox = shape.bounding_box();
+        let bbox = Shape::bounding_box(&shape);
         builder.add(
             bbox.min_x() as f32,
             bbox.min_y() as f32,
@@ -802,4 +827,50 @@ fn compute_bounds_index(lines: &[PathSeg]) -> StaticAABB2DIndex<f32> {
         );
     }
     builder.build().unwrap()
+}
+
+/// Index for culling text items.
+struct TextCullIndex {
+    bounds_index: StaticAABB2DIndex<f32>,
+    entity_mapping: Box<[EntityHandle]>,
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "The loss of range and precision is acceptable."
+)]
+impl TextCullIndex {
+    fn new(tv_env: &mut tabulon_vello::Environment, d: &TDDrawing) -> Self {
+        let measurements = tv_env.measure_text_items(&d.graphics, &d.render_layer);
+        let mut builder = StaticAABB2DIndexBuilder::<f32>::new(measurements.len());
+        let mut entity_mapping = vec![];
+
+        for (ih, (di, s)) in measurements {
+            entity_mapping.push(d.item_entity_map[&ih]);
+            let bbox = (Affine::from(di)
+                * Rect::from_origin_size(Point::ZERO, s).to_path(DEFAULT_ACCURACY))
+            .bounding_box();
+            builder.add(
+                bbox.min_x() as f32,
+                bbox.min_y() as f32,
+                bbox.max_x() as f32,
+                bbox.max_y() as f32,
+            );
+        }
+
+        Self {
+            bounds_index: builder.build().unwrap(),
+            entity_mapping: entity_mapping.into(),
+        }
+    }
+
+    /// Query which text layouts overlap with the bounds.
+    #[tracing::instrument(skip_all)]
+    fn query(&self, left: f32, top: f32, right: f32, bottom: f32) -> BTreeSet<EntityHandle> {
+        self.bounds_index
+            .query(left, top, right, bottom)
+            .iter()
+            .map(|l| self.entity_mapping[*l])
+            .collect()
+    }
 }

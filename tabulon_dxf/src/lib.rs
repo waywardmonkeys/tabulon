@@ -574,6 +574,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 // when this is nonzero, the height from the TXT/MTEXT is ignored.
                 let size = s.text_height;
                 let mut pstyle: StyleSet<Option<Color>> = StyleSet::new(size as f32);
+                pstyle.insert(StyleProperty::LineHeight(1.0));
                 pstyle.insert(StyleProperty::FontWidth(FontWidth::from_ratio(
                     s.width_factor as f32,
                 )));
