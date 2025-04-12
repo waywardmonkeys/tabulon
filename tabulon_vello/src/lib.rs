@@ -4,18 +4,21 @@
 //! Vello rendering utilities for Tabulon.
 
 use tabulon::{
-    graphics_bag::{GraphicsBag, GraphicsItem},
     peniko::{
-        kurbo::{Affine, Size},
+        kurbo::{Affine, Size, Vec2},
         Color, Fill,
     },
     render_layer::RenderLayer,
     shape::{AnyShape, FatPaint, FatShape},
-    text::FatText,
+    text::{AttachmentPoint, FatText},
+    DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle,
 };
 
 use parley::{FontContext, LayoutContext, PositionedLayoutItem};
 use vello::{peniko::Fill::NonZero, Scene};
+
+extern crate alloc;
+use alloc::collections::BTreeMap;
 
 /// Expensive state for rendering.
 #[derive(Default)]
@@ -117,9 +120,8 @@ impl Environment {
                             height: layout.height() as f64,
                         };
 
-                        let placement_transform =
-                            Affine::translate(-attachment_point.select(layout_size))
-                                * Affine::from(*insertion);
+                        let placement_transform = Affine::from(*insertion)
+                            * Affine::translate(-attachment_point.select(layout_size));
 
                         for line in layout.lines() {
                             for item in line.items() {
@@ -161,5 +163,69 @@ impl Environment {
                 }
             }
         }
+    }
+
+    /// Measure text items in a [`RenderLayer`].
+    #[tracing::instrument(skip_all)]
+    pub fn measure_text_items(
+        &mut self,
+        graphics: &GraphicsBag,
+        render_layer: &RenderLayer,
+    ) -> BTreeMap<ItemHandle, (DirectIsometry, Size)> {
+        let Self { font_cx, layout_cx } = self;
+        let mut out = BTreeMap::new();
+
+        for idx in &render_layer.indices {
+            let Some(GraphicsItem::FatText(FatText {
+                text,
+                style,
+                max_inline_size,
+                alignment,
+                insertion,
+                attachment_point,
+                ..
+            })) = graphics.get(*idx)
+            else {
+                continue;
+            };
+
+            let mut builder = layout_cx.ranged_builder(font_cx, text, 1.0);
+            for prop in style.inner().values() {
+                builder.push_default(prop.to_owned());
+            }
+            let mut layout = builder.build(text);
+            layout.break_all_lines(*max_inline_size);
+            layout.align(*max_inline_size, *alignment, Default::default());
+
+            let layout_size = Size {
+                width: max_inline_size.unwrap_or(layout.width()) as f64,
+                height: layout.height() as f64,
+            };
+
+            let rotated_offset = rotate_offset(*attachment_point, layout_size, insertion.angle);
+
+            out.insert(
+                *idx,
+                (
+                    DirectIsometry {
+                        displacement: insertion.displacement - rotated_offset,
+                        ..*insertion
+                    },
+                    layout_size,
+                ),
+            );
+        }
+
+        out
+    }
+}
+
+/// Calculate a top left equivalent insertion point for a layout size and attachment point.
+fn rotate_offset(attachment_point: AttachmentPoint, layout_size: Size, angle: f64) -> Vec2 {
+    let attachment = attachment_point.select(layout_size);
+    let (sin, cos) = angle.sin_cos();
+    Vec2 {
+        x: attachment.x * cos - attachment.y * sin,
+        y: attachment.x * sin + attachment.y * cos,
     }
 }

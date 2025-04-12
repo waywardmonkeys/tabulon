@@ -15,7 +15,7 @@ use crate::{DirectIsometry, TransformHandle};
 
 /// Reference point where text is attached to an insertion point.
 #[repr(i32)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum AttachmentPoint {
     /// Top left corner.
     #[default]
