@@ -30,7 +30,7 @@ use alloc::{
 #[cfg(feature = "std")]
 use std::path::Path;
 
-use core::num::NonZeroU64;
+use core::{cmp::Ordering, num::NonZeroU64};
 
 mod aci_palette;
 use aci_palette::ACI;
@@ -171,6 +171,99 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
 
             Some(bp.into())
         }
+        EntityType::Spline(ref s) => {
+            // FIXME: currently only support viewing from +Z.
+            if s.normal.z != 1.0 {
+                return None;
+            }
+
+            let degree = s.degree_of_curve as usize;
+            if degree > 3 {
+                // Splines of degree > 3 are not supported.
+                return None;
+            }
+
+            let control_points: Vec<Point> =
+                s.control_points.iter().map(point_from_dxf_point).collect();
+            if control_points.len() < degree + 1 {
+                return None;
+            }
+
+            let knots = &s.knot_values;
+            if knots.len() < control_points.len() + degree + 1 {
+                return None;
+            }
+
+            // Find unique knot spans within the valid range.
+            let unique_knots: Vec<f64> = knots[degree..=(knots.len() - 1 - degree)]
+                .iter()
+                .copied()
+                .map(OrdF64)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .map(|OrdF64(k)| k)
+                .collect();
+
+            if unique_knots.is_empty() {
+                return None;
+            }
+
+            let mut bp = BezPath::new();
+
+            // Start at the first knot
+            let first_point = eval_spline(degree, &control_points, knots, unique_knots[0]);
+            bp.move_to(first_point);
+
+            for w in unique_knots.windows(2) {
+                let u0 = w[0];
+                let u1 = w[1];
+                match degree {
+                    1 => {
+                        let p1 = eval_spline(degree, &control_points, knots, u1);
+                        bp.line_to(p1);
+                    }
+                    2 => {
+                        let p0 = bp.elements().last().unwrap().end_point().unwrap();
+                        let p2 = eval_spline(degree, &control_points, knots, u1);
+                        let (dp, dcp, dk) =
+                            derivative_control_points(degree, &control_points, knots);
+                        let d0 = eval_spline(dp, &dcp, &dk, u0).to_vec2();
+                        let d1 = eval_spline(dp, &dcp, &dk, u1).to_vec2();
+                        if let Some(p1) = line_intersection(p0, d0, p2, d1) {
+                            bp.quad_to(p1, p2);
+                        } else {
+                            // Parallel tangents.
+                            bp.line_to(p2);
+                        }
+                    }
+                    3 => {
+                        let p0 = bp.elements().last().unwrap().end_point().unwrap();
+                        let p3 = eval_spline(degree, &control_points, knots, u1);
+                        let (dp, dcp, dk) =
+                            derivative_control_points(degree, &control_points, knots);
+                        let d0 = eval_spline(dp, &dcp, &dk, u0);
+                        let d1 = eval_spline(dp, &dcp, &dk, u1);
+                        let delta_u = u1 - u0;
+                        let p1 = Point {
+                            x: p0.x + (delta_u / 3.0) * d0.x,
+                            y: p0.y + (delta_u / 3.0) * d0.y,
+                        };
+                        let p2 = Point {
+                            x: p3.x - (delta_u / 3.0) * d1.x,
+                            y: p3.y - (delta_u / 3.0) * d1.y,
+                        };
+                        bp.curve_to(p1, p2, p3);
+                    }
+                    _ => unreachable!(), // Degrees > 3 filtered earlier.
+                }
+            }
+
+            if s.is_closed() {
+                bp.close_path();
+            }
+
+            Some(bp.into())
+        }
         _ => {
             // eprintln!(
             //     "unhandled entity {} {} {:?}",
@@ -178,6 +271,90 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
             // );
             None
         }
+    }
+}
+
+// `f64` doesn't implement `Ord`, this is less ugly than other solutions.
+#[derive(PartialEq)]
+struct OrdF64(f64);
+impl Eq for OrdF64 {}
+impl PartialOrd for OrdF64 {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for OrdF64 {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// Evaluate a B-spline at `u`.
+fn eval_spline(degree: usize, control_points: &[Point], knots: &[f64], u: f64) -> Point {
+    let n = control_points.len() - 1;
+    let k = knots
+        .iter()
+        .position(|&knot| knot > u)
+        .unwrap_or(knots.len() - 1)
+        .saturating_sub(1);
+    if k < degree || k > n {
+        return if u < knots[degree] {
+            control_points[0]
+        } else {
+            control_points[n]
+        };
+    }
+    let mut d = control_points[k - degree..=k].to_vec();
+    for r in 1..=degree {
+        for i in (r..=degree).rev() {
+            let alpha = (u - knots[k - degree + i])
+                / (knots[k - degree + i + degree - r + 1] - knots[k - degree + i]);
+            d[i] = Point {
+                x: (1.0 - alpha) * d[i - 1].x + alpha * d[i].x,
+                y: (1.0 - alpha) * d[i - 1].y + alpha * d[i].y,
+            };
+        }
+    }
+    d[degree]
+}
+
+/// Compute derivative control points and knots.
+fn derivative_control_points(
+    degree: usize,
+    control_points: &[Point],
+    knots: &[f64],
+) -> (usize, Vec<Point>, Vec<f64>) {
+    let n = control_points.len() - 1;
+    if degree == 0 || n < 1 {
+        return (0, vec![], knots.to_vec());
+    }
+    let new_degree = degree - 1;
+    let new_control_points: Vec<Point> = (0..n)
+        .map(|i| {
+            let factor = degree as f64 / (knots[i + degree + 1] - knots[i + 1]);
+            let diff = control_points[i + 1] - control_points[i];
+            Point {
+                x: factor * diff.x,
+                y: factor * diff.y,
+            }
+        })
+        .collect();
+    let new_knots = knots[1..knots.len() - 1].to_vec();
+    (new_degree, new_control_points, new_knots)
+}
+
+/// Find the intersection of infinite lines p0 + t × d0 and p1 + t × d1.
+fn line_intersection(p0: Point, d0: Vec2, p1: Point, d1: Vec2) -> Option<Point> {
+    let determinant = d0.x * -d1.y - -d1.x * d0.y;
+    if determinant.abs() < 1e-10 {
+        // Effectively parallel.
+        None
+    } else {
+        let t = ((p1.x - p0.x) * -d1.y - (p1.y - p0.y) * -d1.x) / determinant;
+        Some(Point {
+            x: p0.x + t * d0.x,
+            y: p0.y + t * d0.y,
+        })
     }
 }
 
