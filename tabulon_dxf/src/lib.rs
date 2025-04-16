@@ -44,6 +44,7 @@ pub struct EntityHandle(pub(crate) NonZeroU64);
 pub struct LayerHandle(pub(crate) NonZeroU64);
 
 /// Convert an entity to a [`BezPath`].
+#[tracing::instrument(skip_all)]
 pub fn path_from_entity(e: &dxf::entities::Entity) -> Option<BezPath> {
     match e.specific {
         EntityType::Arc(ref a) => {
@@ -267,10 +268,8 @@ pub fn path_from_entity(e: &dxf::entities::Entity) -> Option<BezPath> {
             Some(bp)
         }
         _ => {
-            // eprintln!(
-            //     "unhandled entity {} {} {:?}",
-            //     e.common.handle.0, e.common.layer, e.specific
-            // );
+            let specific = dxf_entity_type_name(&e.specific);
+            tracing::trace!(entity=e.common.handle.0, layer=e.common.layer, type=specific, "unhandled");
             None
         }
     }
@@ -1159,6 +1158,57 @@ fn dxf_attachment_point_to_tabulon(
         d::BottomLeft => BottomLeft,
         d::BottomCenter => BottomCenter,
         d::BottomRight => BottomRight,
+    }
+}
+
+/// Get the type name of a DXF `EntityType`
+fn dxf_entity_type_name(entity_type: &EntityType) -> &str {
+    match entity_type {
+        EntityType::Face3D(_) => "Face3D",
+        EntityType::Solid3D(_) => "Solid3D",
+        EntityType::ProxyEntity(_) => "ProxyEntity",
+        EntityType::Arc(_) => "Arc",
+        EntityType::ArcAlignedText(_) => "ArcAlignedText",
+        EntityType::AttributeDefinition(_) => "AttributeDefinition",
+        EntityType::Attribute(_) => "Attribute",
+        EntityType::Body(_) => "Body",
+        EntityType::Circle(_) => "Circle",
+        EntityType::RotatedDimension(_) => "RotatedDimension",
+        EntityType::RadialDimension(_) => "RadialDimension",
+        EntityType::DiameterDimension(_) => "DiameterDimension",
+        EntityType::AngularThreePointDimension(_) => "AngularThreePointDimension",
+        EntityType::OrdinateDimension(_) => "OrdinateDimension",
+        EntityType::Ellipse(_) => "Ellipse",
+        EntityType::Helix(_) => "Helix",
+        EntityType::Image(_) => "Image",
+        EntityType::Insert(_) => "Insert",
+        EntityType::Leader(_) => "Leader",
+        EntityType::Light(_) => "Light",
+        EntityType::Line(_) => "Line",
+        EntityType::LwPolyline(_) => "LwPolyline",
+        EntityType::MLine(_) => "MLine",
+        EntityType::MText(_) => "MText",
+        EntityType::OleFrame(_) => "OleFrame",
+        EntityType::Ole2Frame(_) => "Ole2Frame",
+        EntityType::ModelPoint(_) => "ModelPoint",
+        EntityType::Polyline(_) => "Polyline",
+        EntityType::Ray(_) => "Ray",
+        EntityType::Region(_) => "Region",
+        EntityType::RText(_) => "RText",
+        EntityType::Section(_) => "Section",
+        EntityType::Seqend(_) => "Seqend",
+        EntityType::Shape(_) => "Shape",
+        EntityType::Solid(_) => "Solid",
+        EntityType::Spline(_) => "Spline",
+        EntityType::Text(_) => "Text",
+        EntityType::Tolerance(_) => "Tolerance",
+        EntityType::Trace(_) => "Trace",
+        EntityType::DgnUnderlay(_) => "DgnUnderlay",
+        EntityType::DwfUnderlay(_) => "DwfUnderlay",
+        EntityType::PdfUnderlay(_) => "PdfUnderlay",
+        EntityType::Vertex(_) => "Vertex",
+        EntityType::Wipeout(_) => "Wipeout",
+        EntityType::XLine(_) => "XLine",
     }
 }
 
