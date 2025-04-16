@@ -9,7 +9,7 @@ use tabulon::{
         Color, Fill,
     },
     render_layer::RenderLayer,
-    shape::{AnyShape, FatPaint, FatShape},
+    shape::{FatPaint, FatShape},
     text::{AttachmentPoint, FatText},
     DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle,
 };
@@ -46,55 +46,26 @@ impl Environment {
     ) {
         let Self { font_cx, layout_cx } = self;
 
-        // AnyShape is an enum and there's no elegant way to reverse this to an impl Shape.
-        macro_rules! render_anyshape_match {
-            ( $paint:ident, $transform:ident, $subshape:ident, $($name:ident)|* ) => {
-                let FatPaint {
-                    stroke,
-                    stroke_paint,
-                    fill_paint,
-                } = $paint;
-
-                match $subshape {
-                    $(AnyShape::$name(x) =>  {
-                        if let Some(fill_paint) = fill_paint {
-                            scene.fill(NonZero, $transform, fill_paint, None, &x);
-                        }
-                        if let Some(stroke_paint) = stroke_paint {
-                            scene.stroke(&stroke, $transform, stroke_paint, None, &x);
-                        }
-                    }),*
-                }
-            }
-        }
-
         for idx in &render_layer.indices {
             if let Some(ref gi) = graphics.get(*idx) {
                 match gi {
                     GraphicsItem::FatShape(FatShape {
                         paint,
                         transform,
-                        subshapes,
+                        path,
                     }) => {
                         let transform = graphics.get_transform(*transform);
-                        let paint = graphics.get_paint(*paint);
+                        let FatPaint {
+                            stroke,
+                            stroke_paint,
+                            fill_paint,
+                        } = graphics.get_paint(*paint);
 
-                        for subshape in subshapes.as_ref() {
-                            render_anyshape_match!(
-                                paint,
-                                transform,
-                                subshape,
-                                Arc | BezPath
-                                    | Circle
-                                    | CircleSegment
-                                    | CubicBez
-                                    | Ellipse
-                                    | Line
-                                    | PathSeg
-                                    | QuadBez
-                                    | Rect
-                                    | RoundedRect
-                            );
+                        if let Some(fill_paint) = fill_paint {
+                            scene.fill(NonZero, transform, fill_paint, None, path.as_ref());
+                        }
+                        if let Some(stroke_paint) = stroke_paint {
+                            scene.stroke(stroke, transform, stroke_paint, None, path.as_ref());
                         }
                     }
                     GraphicsItem::FatText(FatText {
