@@ -534,9 +534,7 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                         .filter(|(_ih, eh)| **eh == pick)
                         .for_each(|(ih, _eh)| {
                             let Some(GraphicsItem::FatShape(FatShape {
-                                transform,
-                                subshapes,
-                                ..
+                                transform, path, ..
                             })) = viewer.td.graphics.get(*ih)
                             else {
                                 return;
@@ -545,7 +543,7 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                                 &mut gb,
                                 FatShape {
                                     transform: *transform,
-                                    subshapes: subshapes.clone(),
+                                    path: path.clone(),
                                     paint,
                                 },
                             );
@@ -577,24 +575,16 @@ fn load_drawing(p: impl AsRef<Path>) -> Result<TDDrawing> {
 
     {
         eprintln!(
-            "Loaded {} unique entities, {} total stroked shapes, and {} path elements..",
+            "Loaded {} unique entities, {} path segments.",
             drawing.item_entity_map.len(),
             drawing
                 .item_entity_map
                 .iter()
                 .flat_map(|(k, _v)| match drawing.graphics.get(*k) {
-                    Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) => subshapes.iter(),
-                    _ => [].iter(),
+                    Some(GraphicsItem::FatShape(FatShape { path, .. })) => Some(path.segments()),
+                    _ => None,
                 })
-                .count(),
-            drawing
-                .item_entity_map
-                .iter()
-                .flat_map(|(k, _v)| match drawing.graphics.get(*k) {
-                    Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) => subshapes.iter(),
-                    _ => [].iter(),
-                })
-                .flat_map(|s| s.to_path().into_iter())
+                .flatten()
                 .count(),
         );
         let linewidths: BTreeSet<u64> = drawing.restroke_paints.iter().map(|r| r.weight).collect();
@@ -738,15 +728,13 @@ impl EntityIndex {
         let mut lines: Vec<PathSeg> = vec![];
         let mut entity_mapping = vec![];
         for (k, v) in d.item_entity_map.iter() {
-            let Some(GraphicsItem::FatShape(FatShape { subshapes, .. })) = d.graphics.get(*k)
-            else {
+            let Some(GraphicsItem::FatShape(FatShape { path, .. })) = d.graphics.get(*k) else {
                 continue;
             };
-            for s in subshapes.iter() {
-                for seg in s.to_path().segments() {
-                    entity_mapping.push(*v);
-                    lines.push(seg);
-                }
+
+            for seg in path.segments() {
+                entity_mapping.push(*v);
+                lines.push(seg);
             }
         }
         let lines = Box::from(lines.as_slice());

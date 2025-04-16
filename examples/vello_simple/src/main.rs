@@ -7,7 +7,7 @@
 use anyhow::Result;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use vello::kurbo::{Circle, Ellipse, Line, RoundedRect, Stroke};
+use vello::kurbo::{Circle, Ellipse, Line, RoundedRect, Shape, Stroke, DEFAULT_ACCURACY};
 use vello::peniko::color::palette;
 use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
@@ -213,7 +213,9 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
         FatShape {
             transform: Default::default(),
             paint,
-            subshapes: Arc::from([RoundedRect::new(10.0, 10.0, 240.0, 240.0, 20.0).into()]),
+            path: Arc::from(
+                RoundedRect::new(10.0, 10.0, 240.0, 240.0, 20.0).to_path(DEFAULT_ACCURACY),
+            ),
         },
     );
 
@@ -228,7 +230,7 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
         FatShape {
             transform: Default::default(),
             paint,
-            subshapes: Arc::from([Circle::new((420.0, 200.0), 120.0).into()]),
+            path: Arc::from(Circle::new((420.0, 200.0), 120.0).to_path(DEFAULT_ACCURACY)),
         },
     );
 
@@ -243,7 +245,9 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
         FatShape {
             transform: Default::default(),
             paint,
-            subshapes: Arc::from([Ellipse::new((250.0, 420.0), (100.0, 160.0), -90.0).into()]),
+            path: Arc::from(
+                Ellipse::new((250.0, 420.0), (100.0, 160.0), -90.0).to_path(DEFAULT_ACCURACY),
+            ),
         },
     );
 
@@ -258,7 +262,7 @@ fn add_shapes_to_scene(tv_environment: &mut tabulon_vello::Environment, scene: &
         FatShape {
             transform: Default::default(),
             paint,
-            subshapes: Arc::from([Line::new((260.0, 20.0), (620.0, 100.0)).into()]),
+            path: Arc::from(Line::new((260.0, 20.0), (620.0, 100.0)).to_path(DEFAULT_ACCURACY)),
         },
     );
 

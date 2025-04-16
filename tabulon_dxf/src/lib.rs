@@ -8,12 +8,12 @@ use dxf::{entities::EntityType, Drawing, DxfResult};
 use tabulon::{
     peniko::{
         kurbo::{
-            Affine, Arc, BezPath, Circle, Line, PathEl, Point, Stroke, Vec2, DEFAULT_ACCURACY,
+            Affine, Arc, BezPath, Circle, PathEl, Point, Shape, Stroke, Vec2, DEFAULT_ACCURACY,
         },
         Color,
     },
     render_layer::RenderLayer,
-    shape::{AnyShape, FatPaint, FatShape},
+    shape::{FatPaint, FatShape},
     text::{AttachmentPoint, FatText},
     DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle, PaintHandle,
 };
@@ -43,8 +43,8 @@ pub struct EntityHandle(pub(crate) NonZeroU64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LayerHandle(pub(crate) NonZeroU64);
 
-/// Convert entity to lines
-pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
+/// Convert an entity to a [`BezPath`].
+pub fn path_from_entity(e: &dxf::entities::Entity) -> Option<BezPath> {
     match e.specific {
         EntityType::Arc(ref a) => {
             // FIXME: currently only support viewing from +Z.
@@ -71,7 +71,7 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                     sweep_angle: -(end_angle - start_angle).rem_euclid(360.0).to_radians(),
                     x_rotation: 0.0,
                 }
-                .into(),
+                .to_path(DEFAULT_ACCURACY),
             )
         }
         EntityType::Line(ref line) => {
@@ -80,9 +80,10 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                 return None;
             }
 
-            let p0 = point_from_dxf_point(&line.p1);
-            let p1 = point_from_dxf_point(&line.p2);
-            Some(Line { p0, p1 }.into())
+            let mut l = BezPath::new();
+            l.move_to(point_from_dxf_point(&line.p1));
+            l.line_to(point_from_dxf_point(&line.p2));
+            Some(l)
         }
         EntityType::Circle(ref circle) => {
             // FIXME: currently only support viewing from +Z.
@@ -90,12 +91,13 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                 return None;
             }
 
-            let center = point_from_dxf_point(&circle.center);
-            let c = Circle {
-                center,
-                radius: circle.radius,
-            };
-            Some(c.into())
+            Some(
+                Circle {
+                    center: point_from_dxf_point(&circle.center),
+                    radius: circle.radius,
+                }
+                .to_path(DEFAULT_ACCURACY),
+            )
         }
         EntityType::LwPolyline(ref lwp) => {
             // FIXME: currently only support viewing from +Z.
@@ -131,7 +133,7 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                 bp.close_path();
             }
 
-            Some(bp.into())
+            Some(bp)
         }
         EntityType::Polyline(ref pl) => {
             // FIXME: currently only support viewing from +Z.
@@ -169,7 +171,7 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                 bp.close_path();
             }
 
-            Some(bp.into())
+            Some(bp)
         }
         EntityType::Spline(ref s) => {
             // FIXME: currently only support viewing from +Z.
@@ -262,7 +264,7 @@ pub fn shape_from_entity(e: &dxf::entities::Entity) -> Option<AnyShape> {
                 bp.close_path();
             }
 
-            Some(bp.into())
+            Some(bp)
         }
         _ => {
             // eprintln!(
@@ -541,7 +543,7 @@ fn recover_color_enum(c: &dxf::Color) -> i16 {
     }
 }
 
-/// Load a DXF from a path, and convert the entities in its enabled layers to Tabulon [`AnyShape`]s.
+/// Load a DXF from a path into a [`TDDrawing`].
 #[cfg(feature = "std")]
 #[tracing::instrument(skip_all)]
 pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> {
@@ -724,8 +726,8 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                             }
                         }
                         _ => {
-                            if let Some(s) = shape_from_entity(e) {
-                                lines.extend(s.to_path());
+                            if let Some(s) = path_from_entity(e) {
+                                lines.extend(s);
                             }
                         }
                     }
@@ -921,7 +923,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                                 *ce
                             },
                         );
-                        let mut lines = BezPath::new();
+                        let mut path = BezPath::new();
                         for i in 0..ins.row_count {
                             for j in 0..ins.column_count {
                                 let transform = base_transform
@@ -932,13 +934,13 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                                     .then_rotate(-ins.rotation.to_radians())
                                     .then_translate(location.to_vec2());
 
-                                lines.extend(transform * clines);
+                                path.extend(transform * clines);
                             }
                         }
                         push_item(
                             &mut gb,
                             FatShape {
-                                subshapes: sync::Arc::from([lines.into()]),
+                                path: sync::Arc::from(path),
                                 paint: chunk_paint,
                                 ..Default::default()
                             }
@@ -1111,11 +1113,11 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                 );
             }
             _ => {
-                if let Some(s) = shape_from_entity(e) {
+                if let Some(s) = path_from_entity(e) {
                     push_item(
                         &mut gb,
                         FatShape {
-                            subshapes: sync::Arc::from([s]),
+                            path: sync::Arc::from(s),
                             paint: entity_paint,
                             ..Default::default()
                         }
