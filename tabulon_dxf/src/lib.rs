@@ -99,6 +99,34 @@ pub fn path_from_entity(e: &dxf::entities::Entity) -> Option<BezPath> {
                 .to_path(DEFAULT_ACCURACY),
             )
         }
+        EntityType::Ellipse(ref ellipse) => {
+            // FIXME: currently only support viewing from +Z.
+            if ellipse.normal.z != 1.0 {
+                return None;
+            }
+
+            let center = point_from_dxf_point(&ellipse.center);
+            let major_axis = Vec2 {
+                x: ellipse.major_axis.x,
+                y: -ellipse.major_axis.y,
+            };
+            let major_radius = major_axis.hypot();
+            let minor_radius = major_radius * ellipse.minor_axis_ratio;
+            Some(
+                Arc {
+                    center,
+                    radii: Vec2 {
+                        x: major_radius,
+                        y: minor_radius,
+                    },
+                    start_angle: -ellipse.start_parameter,
+                    sweep_angle: -(ellipse.end_parameter - ellipse.start_parameter)
+                        .rem_euclid(2.0 * std::f64::consts::PI),
+                    x_rotation: major_axis.angle(),
+                }
+                .to_path(DEFAULT_ACCURACY),
+            )
+        }
         EntityType::LwPolyline(ref lwp) => {
             // FIXME: currently only support viewing from +Z.
             if lwp.extrusion_direction.z != 1.0 {
