@@ -150,60 +150,65 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
             .get_or_insert_with(|| create_vello_renderer(&self.context, &surface));
 
         if let Some(path_arg) = std::env::args().next_back() {
-            if let Ok(mut drawing) = load_drawing(&path_arg) {
-                let mut title = String::from("Tabulon DXF Viewer — ");
-                title.push_str(
-                    Path::new(&path_arg)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_str()
-                        .unwrap_or_default(),
-                );
-                window.set_title(&title);
+            match load_drawing(&path_arg) {
+                Ok(mut drawing) => {
+                    let mut title = String::from("Tabulon DXF Viewer — ");
+                    title.push_str(
+                        Path::new(&path_arg)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or_default(),
+                    );
+                    window.set_title(&title);
 
-                let picking_index = EntityIndex::new(&drawing);
-                let bounds = picking_index.bounds();
+                    let picking_index = EntityIndex::new(&drawing);
+                    let bounds = picking_index.bounds();
 
-                let text_cull_index = TextCullIndex::new(&mut self.tv_environment, &drawing);
+                    let text_cull_index = TextCullIndex::new(&mut self.tv_environment, &drawing);
 
-                let mut scene = Scene::default();
-                let view_scale = (size.height as f64 / bounds.size().height)
-                    .min(size.width as f64 / bounds.size().width);
+                    let mut scene = Scene::default();
+                    let view_scale = (size.height as f64 / bounds.size().height)
+                        .min(size.width as f64 / bounds.size().width);
 
-                let view_transform = Affine::translate(Vec2 {
-                    x: -bounds.min_x(),
-                    y: -bounds.min_y(),
-                })
-                .then_scale(view_scale);
-                update_transform(
-                    &mut drawing.graphics,
-                    drawing.restroke_paints.clone(),
-                    view_transform,
-                    view_scale,
-                    scale_factor,
-                );
-                self.scene.reset();
+                    let view_transform = Affine::translate(Vec2 {
+                        x: -bounds.min_x(),
+                        y: -bounds.min_y(),
+                    })
+                    .then_scale(view_scale);
+                    update_transform(
+                        &mut drawing.graphics,
+                        drawing.restroke_paints.clone(),
+                        view_transform,
+                        view_scale,
+                        scale_factor,
+                    );
+                    self.scene.reset();
 
-                let encode_started = Instant::now();
-                self.tv_environment.add_render_layer_to_scene(
-                    &mut scene,
-                    &drawing.graphics,
-                    &drawing.render_layer,
-                );
-                let encode_duration = Instant::now().saturating_duration_since(encode_started);
-                eprintln!("Initial projection/encode took {encode_duration:?}");
+                    let encode_started = Instant::now();
+                    self.tv_environment.add_render_layer_to_scene(
+                        &mut scene,
+                        &drawing.graphics,
+                        &drawing.render_layer,
+                    );
+                    let encode_duration = Instant::now().saturating_duration_since(encode_started);
+                    eprintln!("Initial projection/encode took {encode_duration:?}");
 
-                self.viewer = Some(DrawingViewer {
-                    td: drawing,
-                    picking_index,
-                    view_scale,
-                    view_transform,
-                    text_cull_index,
-                    gestures: GestureState::default(),
-                    defer_reprojection: false,
-                    pick: None,
-                });
-            };
+                    self.viewer = Some(DrawingViewer {
+                        td: drawing,
+                        picking_index,
+                        view_scale,
+                        view_transform,
+                        text_cull_index,
+                        gestures: GestureState::default(),
+                        defer_reprojection: false,
+                        pick: None,
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load drawing: {e}");
+                }
+            }
         }
 
         // Save the Window and Surface to a state variable.
