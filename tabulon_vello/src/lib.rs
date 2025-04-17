@@ -70,6 +70,7 @@ impl Environment {
                     }
                     GraphicsItem::FatText(FatText {
                         transform,
+                        paint,
                         text,
                         style,
                         max_inline_size,
@@ -94,6 +95,14 @@ impl Environment {
                         let placement_transform = Affine::from(*insertion)
                             * Affine::translate(-attachment_point.select(layout_size));
 
+                        let FatPaint {
+                            fill_paint: Some(fill_paint),
+                            ..
+                        } = graphics.get_paint(*paint)
+                        else {
+                            continue;
+                        };
+
                         for line in layout.lines() {
                             for item in line.items() {
                                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
@@ -107,7 +116,7 @@ impl Environment {
                                 scene
                                     .draw_glyphs(run.font())
                                     // TODO: Color will come from styled text.
-                                    .brush(Color::BLACK)
+                                    .brush(fill_paint)
                                     .hint(false)
                                     .transform(transform * placement_transform)
                                     .glyph_transform(synthesis.skew().map(|angle| {
