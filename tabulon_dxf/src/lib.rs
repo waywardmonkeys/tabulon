@@ -295,6 +295,22 @@ pub fn path_from_entity(e: &dxf::entities::Entity) -> Option<BezPath> {
 
             Some(bp)
         }
+        EntityType::Solid(ref s) => {
+            // FIXME: currently only support viewing from +Z.
+            if s.extrusion_direction.z != 1.0 {
+                return None;
+            }
+
+            let mut bp = BezPath::new();
+            bp.move_to(point_from_dxf_point(&s.first_corner));
+            bp.line_to(point_from_dxf_point(&s.third_corner));
+            if s.third_corner != s.fourth_corner {
+                bp.line_to(point_from_dxf_point(&s.fourth_corner));
+            }
+            bp.line_to(point_from_dxf_point(&s.second_corner));
+            bp.close_path();
+            Some(bp)
+        }
         _ => {
             let specific = dxf_entity_type_name(&e.specific);
             tracing::trace!(entity=e.common.handle.0, layer=e.common.layer, type=specific, "unhandled");
@@ -683,7 +699,12 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     let lh = handle_for_layer_name[e.common.layer.as_str()];
                     let style = resolve_style(
                         lh,
-                        e.common.lineweight_enum_value,
+                        if matches!(e.specific, EntityType::Solid(..)) {
+                            // Use `i16::MIN` for solid fills.
+                            i16::MIN
+                        } else {
+                            e.common.lineweight_enum_value
+                        },
                         recover_color_enum(&e.common.color),
                     );
                     if style != cur_style {
@@ -838,6 +859,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
 
     // Paints keyed on concrete rgba color, and concrete line width (in iotas).
     let mut paints: BTreeMap<(u32, u64), PaintHandle> = BTreeMap::new();
+    let mut fills: BTreeMap<u32, PaintHandle> = BTreeMap::new();
 
     for e in drawing.entities() {
         if !e.common.is_visible
@@ -898,21 +920,36 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
             let b = ((combined_color >> 8) & 0xFF) as u8;
             let a = (combined_color & 0xFF) as u8;
 
-            *paints
-                .entry((combined_color, lwconcrete))
-                .or_insert_with(|| {
-                    // At first these do not have stroke width, this needs to be set afterward.
+            if lw == i16::MIN {
+                // `i16::MIN` reserved for solid fills
+                *fills.entry(combined_color).or_insert_with(|| {
                     gb.register_paint(FatPaint {
-                        stroke_paint: Some(Color::from_rgba8(r, g, b, a).into()),
+                        fill_paint: Some(Color::from_rgba8(r, g, b, a).into()),
                         ..Default::default()
                     })
                 })
+            } else {
+                *paints
+                    .entry((combined_color, lwconcrete))
+                    .or_insert_with(|| {
+                        // At first these do not have stroke width, this needs to be set afterward.
+                        gb.register_paint(FatPaint {
+                            stroke_paint: Some(Color::from_rgba8(r, g, b, a).into()),
+                            ..Default::default()
+                        })
+                    })
+            }
         };
 
         // Get or create the appropriate PaintHandle for this entity.
         let entity_paint = resolve_paint(
             &mut gb,
-            e.common.lineweight_enum_value,
+            if matches!(e.specific, EntityType::Solid(..)) {
+                // Use `i16::MIN` for solid fills.
+                i16::MIN
+            } else {
+                e.common.lineweight_enum_value
+            },
             recover_color_enum(&e.common.color),
         );
 
