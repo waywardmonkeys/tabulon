@@ -31,7 +31,7 @@ use tabulon_dxf::{EntityHandle, RestrokePaint, TDDrawing};
 use tabulon::{
     render_layer::RenderLayer,
     shape::{FatPaint, FatShape},
-    GraphicsBag, GraphicsItem, PaintHandle,
+    GraphicsBag, GraphicsItem, ItemHandle, PaintHandle,
 };
 
 extern crate alloc;
@@ -484,16 +484,18 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                     clippy::cast_possible_truncation,
                     reason = "The loss of range and precision is acceptable."
                 )]
-                let visible =
-                    viewer
-                        .picking_index
-                        .query(tl.x as f32, tl.y as f32, br.x as f32, br.y as f32);
+                let visible = viewer.picking_index.query_items(
+                    tl.x as f32,
+                    tl.y as f32,
+                    br.x as f32,
+                    br.y as f32,
+                );
 
                 #[allow(
                     clippy::cast_possible_truncation,
                     reason = "The loss of range and precision is acceptable."
                 )]
-                let visible_text = viewer.text_cull_index.query(
+                let visible_text = viewer.text_cull_index.query_items(
                     tl.x as f32,
                     tl.y as f32,
                     br.x as f32,
@@ -505,12 +507,8 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                         .td
                         .render_layer
                         .filter(|ih| match viewer.td.graphics.get(*ih) {
-                            Some(GraphicsItem::FatShape(..)) => {
-                                visible.contains(&viewer.td.item_entity_map[ih])
-                            }
-                            Some(GraphicsItem::FatText(..)) => {
-                                visible_text.contains(&viewer.td.item_entity_map[ih])
-                            }
+                            Some(GraphicsItem::FatShape(..)) => visible.contains(ih),
+                            Some(GraphicsItem::FatText(..)) => visible_text.contains(ih),
                             _ => false,
                         });
                 self.scene.reset();
@@ -536,7 +534,7 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                         .td
                         .item_entity_map
                         .iter()
-                        .filter(|(_ih, eh)| **eh == pick)
+                        .filter(|(ih, eh)| **eh == pick && visible.contains(ih))
                         .for_each(|(ih, _eh)| {
                             let Some(GraphicsItem::FatShape(FatShape {
                                 transform, path, ..
@@ -734,6 +732,7 @@ struct EntityIndex {
     bounds_index: StaticAABB2DIndex<f32>,
     lines: Box<[PathSeg]>,
     entity_mapping: Box<[EntityHandle]>,
+    item_mapping: Box<[ItemHandle]>,
 }
 
 #[allow(
@@ -746,6 +745,7 @@ impl EntityIndex {
 
         let mut lines: Vec<PathSeg> = vec![];
         let mut entity_mapping = vec![];
+        let mut item_mapping = vec![];
         for (k, v) in d.item_entity_map.iter() {
             let Some(GraphicsItem::FatShape(FatShape { path, .. })) = d.graphics.get(*k) else {
                 continue;
@@ -753,11 +753,13 @@ impl EntityIndex {
 
             for seg in path.segments() {
                 entity_mapping.push(*v);
+                item_mapping.push(*k);
                 lines.push(seg);
             }
         }
         let lines = Box::from(lines.as_slice());
         let entity_mapping = Box::from(entity_mapping.as_slice());
+        let item_mapping = Box::from(item_mapping.as_slice());
 
         let bounds_index = compute_bounds_index(&lines);
 
@@ -768,6 +770,7 @@ impl EntityIndex {
             bounds_index,
             lines,
             entity_mapping,
+            item_mapping,
         }
     }
 
@@ -796,11 +799,11 @@ impl EntityIndex {
 
     /// Query which entities' geometry overlaps with the bounds.
     #[tracing::instrument(skip_all)]
-    fn query(&self, left: f32, top: f32, right: f32, bottom: f32) -> BTreeSet<EntityHandle> {
+    fn query_items(&self, left: f32, top: f32, right: f32, bottom: f32) -> BTreeSet<ItemHandle> {
         self.bounds_index
             .query(left, top, right, bottom)
             .iter()
-            .map(|l| self.entity_mapping[*l])
+            .map(|&i| self.item_mapping[i])
             .collect()
     }
 
@@ -839,7 +842,7 @@ fn compute_bounds_index(lines: &[PathSeg]) -> StaticAABB2DIndex<f32> {
 /// Index for culling text items.
 struct TextCullIndex {
     bounds_index: StaticAABB2DIndex<f32>,
-    entity_mapping: Box<[EntityHandle]>,
+    item_mapping: Box<[ItemHandle]>,
 }
 
 #[allow(
@@ -850,10 +853,10 @@ impl TextCullIndex {
     fn new(tv_env: &mut tabulon_vello::Environment, d: &TDDrawing) -> Self {
         let measurements = tv_env.measure_text_items(&d.graphics, &d.render_layer);
         let mut builder = StaticAABB2DIndexBuilder::<f32>::new(measurements.len());
-        let mut entity_mapping = vec![];
+        let mut item_mapping = vec![];
 
         for (ih, (di, s)) in measurements {
-            entity_mapping.push(d.item_entity_map[&ih]);
+            item_mapping.push(ih);
             let bbox = (Affine::from(di)
                 * Rect::from_origin_size(Point::ZERO, s).to_path(DEFAULT_ACCURACY))
             .bounding_box();
@@ -867,17 +870,17 @@ impl TextCullIndex {
 
         Self {
             bounds_index: builder.build().unwrap(),
-            entity_mapping: entity_mapping.into(),
+            item_mapping: item_mapping.into(),
         }
     }
 
     /// Query which text layouts overlap with the bounds.
     #[tracing::instrument(skip_all)]
-    fn query(&self, left: f32, top: f32, right: f32, bottom: f32) -> BTreeSet<EntityHandle> {
+    fn query_items(&self, left: f32, top: f32, right: f32, bottom: f32) -> BTreeSet<ItemHandle> {
         self.bounds_index
             .query(left, top, right, bottom)
             .iter()
-            .map(|l| self.entity_mapping[*l])
+            .map(|&l| self.item_mapping[l])
             .collect()
     }
 }
