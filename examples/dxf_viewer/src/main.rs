@@ -31,7 +31,7 @@ use tabulon_dxf::{EntityHandle, RestrokePaint, TDDrawing};
 use tabulon::{
     render_layer::RenderLayer,
     shape::{FatPaint, FatShape},
-    GraphicsBag, GraphicsItem,
+    GraphicsBag, GraphicsItem, PaintHandle,
 };
 
 extern crate alloc;
@@ -576,7 +576,7 @@ fn load_drawing(p: impl AsRef<Path>) -> Result<TDDrawing> {
     let drawing_load_duration = Instant::now().saturating_duration_since(drawing_load_started);
     eprintln!("Drawing took {drawing_load_duration:?} to load and translate.");
 
-    light_adapt_paints(&mut drawing.graphics, drawing.restroke_paints.clone());
+    light_adapt_paints(&mut drawing.graphics, &drawing.render_layer);
 
     {
         eprintln!(
@@ -704,11 +704,25 @@ fn update_transform(
 /// The ACI palette and drawings using it assume a black background,
 /// this adapts colors to have a reasonable degree of contrast for the
 /// time being, until a more permanent solution is found.
-fn light_adapt_paints(graphics: &mut GraphicsBag, restroke_paints: Arc<[RestrokePaint]>) {
-    for RestrokePaint { handle, .. } in restroke_paints.iter() {
-        let p = graphics.get_paint_mut(*handle);
+fn light_adapt_paints(graphics: &mut GraphicsBag, render_layer: &RenderLayer) {
+    let paint_handles: BTreeSet<PaintHandle> = render_layer
+        .indices
+        .iter()
+        .flat_map(|ih| {
+            graphics.get(*ih).map(|i| match i {
+                GraphicsItem::FatShape(s) => s.paint,
+                GraphicsItem::FatText(t) => t.paint,
+            })
+        })
+        .collect();
+
+    for handle in paint_handles {
+        let p = graphics.get_paint_mut(handle);
         if let Some(Brush::Solid(c)) = p.stroke_paint {
             p.stroke_paint = Some(Brush::Solid(c.map_lightness(|x| 1.2 - x)));
+        }
+        if let Some(Brush::Solid(c)) = p.fill_paint {
+            p.fill_paint = Some(Brush::Solid(c.map_lightness(|x| 1.2 - x)));
         }
     }
 }

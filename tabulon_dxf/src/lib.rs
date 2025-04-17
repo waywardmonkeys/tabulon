@@ -944,7 +944,10 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
         // Get or create the appropriate PaintHandle for this entity.
         let entity_paint = resolve_paint(
             &mut gb,
-            if matches!(e.specific, EntityType::Solid(..)) {
+            if matches!(
+                e.specific,
+                EntityType::Solid(..) | EntityType::Text(..) | EntityType::MText(..)
+            ) {
                 // Use `i16::MIN` for solid fills.
                 i16::MIN
             } else {
@@ -1088,6 +1091,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     &mut gb,
                     FatText {
                         transform: Default::default(),
+                        paint: entity_paint,
                         text: nt.into(),
                         // TODO: Map more styling information from the MText
                         style: styles.get(mt.text_style_name.as_str()).map_or_else(
@@ -1146,6 +1150,7 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                     &mut gb,
                     FatText {
                         transform: Default::default(),
+                        paint: entity_paint,
                         text: text.into(),
                         style: styles.get(t.text_style_name.as_str()).map_or_else(
                             || StyleSet::new(t.text_height as f32),

@@ -11,7 +11,7 @@ use peniko::{
     Color,
 };
 
-use crate::{DirectIsometry, TransformHandle};
+use crate::{DirectIsometry, PaintHandle, TransformHandle};
 
 /// Reference point where text is attached to an insertion point.
 #[repr(i32)]
@@ -70,6 +70,10 @@ impl AttachmentPoint {
 pub struct FatText {
     /// Primary transform.
     pub transform: TransformHandle,
+    /// Paint.
+    ///
+    /// Only fills are used currently.
+    pub paint: PaintHandle,
     /// Text content.
     pub text: Arc<str>,
     /// Styles for the text.
