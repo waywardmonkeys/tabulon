@@ -507,7 +507,7 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                         .td
                         .render_layer
                         .filter(|ih| match viewer.td.graphics.get(*ih) {
-                            Some(GraphicsItem::FatShape(..)) => visible.contains(ih),
+                            Some(GraphicsItem::FatShape(..)) => visible.binary_search(ih).is_ok(),
                             Some(GraphicsItem::FatText(..)) => visible_text.contains(ih),
                             _ => false,
                         });
@@ -530,12 +530,11 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                         fill_paint: None,
                     });
 
-                    viewer
-                        .td
-                        .item_entity_map
+                    culled_render_layer
+                        .indices
                         .iter()
-                        .filter(|(ih, eh)| **eh == pick && visible.contains(ih))
-                        .for_each(|(ih, _eh)| {
+                        .filter(|ih| viewer.td.item_entity_map[ih] == pick)
+                        .for_each(|ih| {
                             let Some(GraphicsItem::FatShape(FatShape {
                                 transform, path, ..
                             })) = viewer.td.graphics.get(*ih)
@@ -799,12 +798,19 @@ impl EntityIndex {
 
     /// Query which entities' geometry overlaps with the bounds.
     #[tracing::instrument(skip_all)]
-    fn query_items(&self, left: f32, top: f32, right: f32, bottom: f32) -> BTreeSet<ItemHandle> {
-        self.bounds_index
+    fn query_items(&self, left: f32, top: f32, right: f32, bottom: f32) -> Vec<ItemHandle> {
+        let mut is: Vec<ItemHandle> = vec![];
+        for ih in self
+            .bounds_index
             .query(left, top, right, bottom)
             .iter()
             .map(|&i| self.item_mapping[i])
-            .collect()
+        {
+            if let Err(i) = is.binary_search(&ih) {
+                is.insert(i, ih);
+            }
+        }
+        is
     }
 
     fn bounds(&self) -> Rect {
