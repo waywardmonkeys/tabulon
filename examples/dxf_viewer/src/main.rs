@@ -576,18 +576,22 @@ fn load_drawing(p: impl AsRef<Path>) -> Result<TDDrawing> {
     light_adapt_paints(&mut drawing.graphics, &drawing.render_layer);
 
     {
+        let mut segment_count = 0;
+        let mut text_count = 0;
+        for item_handle in drawing.item_entity_map.keys() {
+            match drawing.graphics.get(*item_handle) {
+                Some(GraphicsItem::FatShape(FatShape { path, .. })) => {
+                    segment_count += path.segments().count();
+                }
+                Some(GraphicsItem::FatText(_)) => text_count += 1,
+                None => {}
+            }
+        }
         eprintln!(
-            "Loaded {} unique entities, {} path segments.",
+            "Loaded {} unique entities, {} path segments, {} text blocks.",
             drawing.item_entity_map.len(),
-            drawing
-                .item_entity_map
-                .iter()
-                .flat_map(|(k, _v)| match drawing.graphics.get(*k) {
-                    Some(GraphicsItem::FatShape(FatShape { path, .. })) => Some(path.segments()),
-                    _ => None,
-                })
-                .flatten()
-                .count(),
+            segment_count,
+            text_count
         );
         let linewidths: BTreeSet<u64> = drawing.restroke_paints.iter().map(|r| r.weight).collect();
         eprintln!(
