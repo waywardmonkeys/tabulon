@@ -119,10 +119,16 @@ impl Environment {
                                     .brush(fill_paint)
                                     .hint(false)
                                     .transform(transform * placement_transform)
-                                    .glyph_transform(synthesis.skew().map(|angle| {
-                                        Affine::skew(angle.to_radians().tan() as f64, 0.0)
+                                    .glyph_transform(Some(if let Some(angle) = synthesis.skew() {
+                                        Affine::scale(50_f64.recip())
+                                            * Affine::skew(angle.to_radians().tan() as f64, 0.0)
+                                    } else {
+                                        Affine::scale(50_f64.recip())
                                     }))
-                                    .font_size(run.font_size())
+                                    // Small font sizes are quantized, multiplying by
+                                    // 50 and then scaling by 1 / 50 at the glyph level
+                                    // works around this, but it is a hack.
+                                    .font_size(run.font_size() * 50.0)
                                     .normalized_coords(run.normalized_coords())
                                     .draw(
                                         Fill::NonZero,
