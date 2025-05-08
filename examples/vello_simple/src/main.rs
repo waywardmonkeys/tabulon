@@ -130,11 +130,11 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                 self.renderers[surface.dev_id]
                     .as_mut()
                     .unwrap()
-                    .render_to_surface(
+                    .render_to_texture(
                         &device_handle.device,
                         &device_handle.queue,
                         &self.scene,
-                        &surface_texture,
+                        &surface.target_view,
                         &vello::RenderParams {
                             base_color: palette::css::BLACK, // Background color
                             width,
@@ -144,6 +144,21 @@ impl ApplicationHandler for SimpleVelloApp<'_> {
                     )
                     .expect("failed to render to surface");
 
+                let mut encoder =
+                    device_handle
+                        .device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Surface Blit"),
+                        });
+                surface.blitter.copy(
+                    &device_handle.device,
+                    &mut encoder,
+                    &surface.target_view,
+                    &surface_texture
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                );
+                device_handle.queue.submit([encoder.finish()]);
                 // Queue the texture to be presented on the surface
                 surface_texture.present();
 
@@ -184,10 +199,10 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
     Renderer::new(
         &render_cx.devices[surface.dev_id].device,
         RendererOptions {
-            surface_format: Some(surface.format),
             use_cpu: false,
             antialiasing_support: vello::AaSupport::all(),
             num_init_threads: NonZeroUsize::new(1),
+            pipeline_cache: None,
         },
     )
     .expect("Couldn't create renderer")

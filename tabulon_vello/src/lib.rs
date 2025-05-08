@@ -80,7 +80,7 @@ impl Environment {
                     }) => {
                         let transform = graphics.get_transform(*transform);
 
-                        let mut builder = layout_cx.ranged_builder(font_cx, text, 1.0);
+                        let mut builder = layout_cx.ranged_builder(font_cx, text, 1.0, false);
                         for prop in style.inner().values() {
                             builder.push_default(prop.to_owned());
                         }
@@ -175,7 +175,7 @@ impl Environment {
                 continue;
             };
 
-            let mut builder = layout_cx.ranged_builder(font_cx, text, 1.0);
+            let mut builder = layout_cx.ranged_builder(font_cx, text, 1.0, false);
             for prop in style.inner().values() {
                 builder.push_default(prop.to_owned());
             }

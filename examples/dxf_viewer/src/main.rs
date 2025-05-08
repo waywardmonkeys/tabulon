@@ -413,16 +413,16 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                         .expect("failed to get surface texture")
                 });
 
-                tracing::info_span!("render_to_surface").in_scope(|| {
+                tracing::info_span!("render_to_texture").in_scope(|| {
                     // Render to the surface's texture
                     self.renderers[surface.dev_id]
                         .as_mut()
                         .unwrap()
-                        .render_to_surface(
+                        .render_to_texture(
                             &device_handle.device,
                             &device_handle.queue,
                             &self.scene,
-                            &surface_texture,
+                            &surface.target_view,
                             &vello::RenderParams {
                                 base_color: Color::WHITE, // Background color
                                 width,
@@ -430,7 +430,24 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                                 antialiasing_method: AaConfig::Area,
                             },
                         )
-                        .expect("failed to render to surface");
+                        .expect("failed to render to the texture");
+                });
+
+                tracing::info_span!("texture_surface_blit").in_scope(|| {
+                    let mut encoder = device_handle.device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor {
+                            label: Some("Surface Blit"),
+                        },
+                    );
+                    surface.blitter.copy(
+                        &device_handle.device,
+                        &mut encoder,
+                        &surface.target_view,
+                        &surface_texture
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default()),
+                    );
+                    device_handle.queue.submit([encoder.finish()]);
                 });
 
                 tracing::info_span!("present_surface").in_scope(|| {
@@ -657,10 +674,10 @@ fn create_vello_renderer(render_cx: &RenderContext, surface: &RenderSurface<'_>)
     Renderer::new(
         &render_cx.devices[surface.dev_id].device,
         RendererOptions {
-            surface_format: Some(surface.format),
             use_cpu: false,
             antialiasing_support: vello::AaSupport::area_only(),
             num_init_threads: NonZeroUsize::new(1),
+            pipeline_cache: None,
         },
     )
     .expect("Couldn't create renderer")
