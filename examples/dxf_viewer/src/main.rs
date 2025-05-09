@@ -380,9 +380,7 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
 
                 viewer.view_transform = viewer
                     .view_transform
-                    .then_translate(-viewer.gestures.cursor_pos.to_vec2())
-                    .then_scale(1. + d)
-                    .then_translate(viewer.gestures.cursor_pos.to_vec2());
+                    .then_scale_about(1. + d, viewer.gestures.cursor_pos);
                 viewer.view_scale *= 1. + d;
                 reproject = true;
             }
