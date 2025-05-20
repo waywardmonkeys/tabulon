@@ -19,6 +19,8 @@ tracing-subscriber.workspace = true
 tracing-tracy = { workspace = true, optional = true }
 tracing.workspace = true
 tracy-client = { workspace = true, optional = true }
+ui-events = "0.1.0"
+ui-events-winit = "0.1.0"
 vello = "0.5.0"
 winit = "0.30.10"
 

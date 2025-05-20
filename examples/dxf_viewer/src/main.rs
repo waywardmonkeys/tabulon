@@ -12,6 +12,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 use tracing_subscriber::prelude::*;
+use ui_events::{
+    pointer::{PointerButton, PointerEvent, PointerId, PointerInfo, PointerType, PointerUpdate},
+    ScrollDelta,
+};
+use ui_events_winit::{WindowEventReducer, WindowEventTranslation};
 use vello::kurbo::{
     Affine, ParamCurveNearest, PathSeg, Point, Rect, Shape, Stroke, Vec2, DEFAULT_ACCURACY,
 };
@@ -51,8 +56,8 @@ enum RenderState<'s> {
 
 #[derive(Default)]
 struct GestureState {
-    /// Currently panning with primary pointer.
-    primary_pan: bool,
+    /// Pointer currently panning.
+    pan: Option<PointerId>,
     /// Cursor position.
     cursor_pos: Point,
 }
@@ -97,6 +102,9 @@ struct TabulonDxfViewer<'s> {
 
     /// Tabulon Vello environment.
     tv_environment: tabulon_vello::Environment,
+
+    /// ui-events `WindowEvent` reducer.
+    event_reducer: WindowEventReducer,
 
     /// State related to viewing a specific drawing.
     viewer: Option<DrawingViewer>,
@@ -242,14 +250,129 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
         // Set if reprojection is requested as a result of a deferral.
         let mut reproject_deferred = false;
 
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::KeyboardInput { event, .. } => {
-                use winit::keyboard::{Key, NamedKey};
-                if event.state.is_pressed() && event.logical_key == Key::Named(NamedKey::Escape) {
-                    event_loop.exit();
+        if !matches!(
+            event,
+            WindowEvent::KeyboardInput {
+                is_synthetic: true,
+                ..
+            }
+        ) {
+            if let Some(wet) = self.event_reducer.reduce(&event) {
+                match wet {
+                    WindowEventTranslation::Keyboard(k) => {
+                        use ui_events::keyboard::{Key, NamedKey};
+                        if k.state.is_down() && matches!(k.key, Key::Named(NamedKey::Escape)) {
+                            event_loop.exit();
+                        }
+                    }
+                    WindowEventTranslation::Pointer(p) => {
+                        let Some(viewer) = &mut self.viewer else {
+                            return;
+                        };
+
+                        match p {
+                            PointerEvent::Down {
+                                pointer:
+                                    PointerInfo {
+                                        pointer_id,
+                                        pointer_type: PointerType::Mouse,
+                                        ..
+                                    },
+                                button: Some(PointerButton::Primary),
+                                state,
+                            }
+                            | PointerEvent::Down {
+                                pointer:
+                                    PointerInfo {
+                                        pointer_id,
+                                        pointer_type: PointerType::Touch,
+                                        ..
+                                    },
+                                state,
+                                ..
+                            } => {
+                                if viewer.gestures.pan.is_none() {
+                                    viewer.gestures.pan = pointer_id;
+                                    viewer.gestures.cursor_pos = Point {
+                                        x: state.position.x,
+                                        y: state.position.y,
+                                    }
+                                }
+                            }
+                            PointerEvent::Move(PointerUpdate {
+                                pointer: PointerInfo { pointer_id, .. },
+                                current,
+                                ..
+                            }) => {
+                                let p = Point {
+                                    x: current.position.x,
+                                    y: current.position.y,
+                                };
+
+                                let dp = viewer.view_transform.inverse() * p;
+
+                                if viewer.gestures.pan == pointer_id {
+                                    viewer.view_transform = viewer
+                                        .view_transform
+                                        .then_translate(-(viewer.gestures.cursor_pos - p));
+                                    reproject = true;
+                                } else if pointer_id == Some(PointerId::PRIMARY) {
+                                    let pick_dist: f64 = window.scale_factor() * 1.414;
+                                    let pick_started = Instant::now();
+
+                                    let pick = viewer
+                                        .picking_index
+                                        .pick(dp, pick_dist * viewer.view_scale.recip());
+
+                                    if viewer.pick != pick {
+                                        if let Some(pick) = pick {
+                                            let pick_duration = Instant::now()
+                                                .saturating_duration_since(pick_started);
+                                            eprintln!(
+                                                "{:#?}",
+                                                viewer.td.info.get_entity(pick).specific
+                                            );
+                                            eprintln!("Pick took {pick_duration:?}");
+                                        }
+                                        viewer.pick = pick;
+                                        reproject = true;
+                                    }
+                                }
+
+                                viewer.gestures.cursor_pos = p;
+                            }
+                            PointerEvent::Up {
+                                pointer: PointerInfo { pointer_id, .. },
+                                ..
+                            }
+                            | PointerEvent::Leave(PointerInfo { pointer_id, .. })
+                            | PointerEvent::Cancel(PointerInfo { pointer_id, .. }) => {
+                                if viewer.gestures.pan == pointer_id {
+                                    viewer.gestures.pan = None;
+                                }
+                            }
+                            PointerEvent::Scroll { delta, .. } => {
+                                let d = match delta {
+                                    ScrollDelta::LineDelta(_, y) => y as f64 * 0.1,
+                                    ScrollDelta::PixelDelta(pd) => pd.y * 0.05,
+                                    _ => 0.,
+                                };
+
+                                viewer.view_transform = viewer
+                                    .view_transform
+                                    .then_scale_about(1. + d, viewer.gestures.cursor_pos);
+                                viewer.view_scale *= 1. + d;
+                                reproject = true;
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
+        }
+
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
 
             WindowEvent::Resized(size) => {
                 self.context
@@ -313,75 +436,6 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                     defer_reprojection: false,
                 });
 
-                reproject = true;
-            }
-
-            WindowEvent::CursorMoved { position, .. } => {
-                let p = {
-                    let winit::dpi::PhysicalPosition::<f64> { x, y } = position;
-                    Point { x, y }
-                };
-
-                let Some(viewer) = &mut self.viewer else {
-                    return;
-                };
-
-                let dp = viewer.view_transform.inverse() * p;
-
-                if viewer.gestures.primary_pan {
-                    viewer.view_transform = viewer
-                        .view_transform
-                        .then_translate(-(viewer.gestures.cursor_pos - p));
-                    reproject = true;
-                } else {
-                    let pick_dist: f64 = window.scale_factor() * 1.414;
-                    let pick_started = Instant::now();
-
-                    let pick = viewer
-                        .picking_index
-                        .pick(dp, pick_dist * viewer.view_scale.recip());
-
-                    if viewer.pick != pick {
-                        if let Some(pick) = pick {
-                            let pick_duration =
-                                Instant::now().saturating_duration_since(pick_started);
-                            eprintln!("{:#?}", viewer.td.info.get_entity(pick).specific);
-                            eprintln!("Pick took {pick_duration:?}");
-                        }
-                        viewer.pick = pick;
-                        reproject = true;
-                    }
-                }
-                viewer.gestures.cursor_pos = p;
-            }
-
-            WindowEvent::MouseInput {
-                state,
-                button: winit::event::MouseButton::Left,
-                ..
-            } => {
-                let Some(viewer) = &mut self.viewer else {
-                    return;
-                };
-
-                viewer.gestures.primary_pan = matches!(state, winit::event::ElementState::Pressed);
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let Some(viewer) = &mut self.viewer else {
-                    return;
-                };
-
-                use winit::{dpi::PhysicalPosition, event::MouseScrollDelta::*};
-                let d = match delta {
-                    LineDelta(_, y) => y as f64 * 0.1,
-                    PixelDelta(PhysicalPosition::<f64> { y, .. }) => y * 0.05,
-                };
-
-                viewer.view_transform = viewer
-                    .view_transform
-                    .then_scale_about(1. + d, viewer.gestures.cursor_pos);
-                viewer.view_scale *= 1. + d;
                 reproject = true;
             }
 
@@ -647,6 +701,7 @@ fn main() -> Result<()> {
         state: RenderState::Suspended(None),
         scene: Scene::new(),
         tv_environment: Default::default(),
+        event_reducer: Default::default(),
         viewer: None,
         hover_threads: Default::default(),
     };
