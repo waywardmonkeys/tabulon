@@ -7,9 +7,9 @@
 use anyhow::Result;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use vello::kurbo::{Circle, Ellipse, Line, RoundedRect, Shape, Stroke, DEFAULT_ACCURACY};
-use vello::peniko::color::palette;
+use vello::kurbo::{Circle, DEFAULT_ACCURACY, Ellipse, Line, RoundedRect, Shape, Stroke};
 use vello::peniko::Color;
+use vello::peniko::color::palette;
 use vello::util::{RenderContext, RenderSurface};
 use vello::{AaConfig, Renderer, RendererOptions, Scene};
 use winit::application::ApplicationHandler;

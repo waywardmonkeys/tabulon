@@ -13,14 +13,14 @@ use std::thread;
 use std::time::Instant;
 use tracing_subscriber::prelude::*;
 use ui_events::{
-    pointer::{PointerButton, PointerEvent, PointerId, PointerInfo, PointerType, PointerUpdate},
     ScrollDelta,
+    pointer::{PointerButton, PointerEvent, PointerId, PointerInfo, PointerType, PointerUpdate},
 };
 use ui_events_winit::{WindowEventReducer, WindowEventTranslation};
 use vello::kurbo::{
-    Affine, ParamCurveNearest, PathSeg, Point, Rect, Shape, Stroke, Vec2, DEFAULT_ACCURACY,
+    Affine, DEFAULT_ACCURACY, ParamCurveNearest, PathSeg, Point, Rect, Shape, Stroke, Vec2,
 };
-use vello::peniko::{color::palette, Brush, Color};
+use vello::peniko::{Brush, Color, color::palette};
 use vello::util::{RenderContext, RenderSurface};
 use vello::{AaConfig, Renderer, RendererOptions, Scene};
 use winit::application::ApplicationHandler;
@@ -34,9 +34,9 @@ use vello::wgpu;
 use tabulon_dxf::{EntityHandle, RestrokePaint, TDDrawing};
 
 use tabulon::{
+    GraphicsBag, GraphicsItem, ItemHandle, PaintHandle,
     render_layer::RenderLayer,
     shape::{FatPaint, FatShape},
-    GraphicsBag, GraphicsItem, ItemHandle, PaintHandle,
 };
 
 extern crate alloc;

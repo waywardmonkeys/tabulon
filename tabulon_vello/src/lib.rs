@@ -4,18 +4,18 @@
 //! Vello rendering utilities for Tabulon.
 
 use tabulon::{
+    DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle,
     peniko::{
-        kurbo::{Affine, Size, Vec2},
         Color, Fill,
+        kurbo::{Affine, Size, Vec2},
     },
     render_layer::RenderLayer,
     shape::{FatPaint, FatShape},
     text::{AttachmentPoint, FatText},
-    DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle,
 };
 
 use parley::{FontContext, LayoutContext, PositionedLayoutItem};
-use vello::{peniko::Fill::NonZero, Scene};
+use vello::{Scene, peniko::Fill::NonZero};
 
 extern crate alloc;
 use alloc::collections::BTreeMap;
