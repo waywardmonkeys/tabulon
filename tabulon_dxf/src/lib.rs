@@ -3,19 +3,19 @@
 
 //! DXF loader for Tabulon
 
-use dxf::{entities::EntityType, Drawing, DxfResult};
+use dxf::{Drawing, DxfResult, entities::EntityType};
 
 use tabulon::{
+    DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle, PaintHandle,
     peniko::{
-        kurbo::{
-            Affine, Arc, BezPath, Circle, PathEl, Point, Shape, Stroke, Vec2, DEFAULT_ACCURACY,
-        },
         Color,
+        kurbo::{
+            Affine, Arc, BezPath, Circle, DEFAULT_ACCURACY, PathEl, Point, Shape, Stroke, Vec2,
+        },
     },
     render_layer::RenderLayer,
     shape::{FatPaint, FatShape},
     text::{AttachmentPoint, FatText},
-    DirectIsometry, GraphicsBag, GraphicsItem, ItemHandle, PaintHandle,
 };
 
 use joto_constants::u64::MICROMETER;
@@ -1216,8 +1216,8 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
 fn dxf_attachment_point_to_tabulon(
     attachment_point: dxf::enums::AttachmentPoint,
 ) -> AttachmentPoint {
-    use dxf::enums::AttachmentPoint as d;
     use AttachmentPoint::*;
+    use dxf::enums::AttachmentPoint as d;
     match attachment_point {
         d::TopLeft => TopLeft,
         d::TopCenter => TopCenter,

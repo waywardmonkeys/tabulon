@@ -7,8 +7,8 @@ use alloc::sync::Arc;
 
 use parley::{Alignment, StyleSet};
 use peniko::{
-    kurbo::{Size, Vec2},
     Color,
+    kurbo::{Size, Vec2},
 };
 
 use crate::{DirectIsometry, PaintHandle, TransformHandle};

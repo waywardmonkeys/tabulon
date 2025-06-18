@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use peniko::{
-    kurbo::{BezPath, Rect, Shape, Stroke},
     Brush,
+    kurbo::{BezPath, Rect, Shape, Stroke},
 };
 
 extern crate alloc;
