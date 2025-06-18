@@ -17,6 +17,6 @@ This release has an [MSRV][] of 1.85.
 
 This is the initial release.
 
-[Unreleased]: https://github.com/linebender/tabulon/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/endoli/tabulon/compare/v0.1.0...HEAD
 
 [MSRV]: README.md#minimum-supported-rust-version-msrv
