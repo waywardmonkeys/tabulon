@@ -5,9 +5,9 @@
 A library for working with canvas-like scenes.
 
 [![Linebender Zulip, #general channel](https://img.shields.io/badge/Linebender-%23general-blue?logo=Zulip)](https://xi.zulipchat.com/#narrow/channel/147921-general)
-[![dependency status](https://deps.rs/repo/github/linebender/tabulon/status.svg)](https://deps.rs/repo/github/linebender/tabulon)
+[![dependency status](https://deps.rs/repo/github/endoli/tabulon/status.svg)](https://deps.rs/repo/github/endoli/tabulon)
 [![Apache 2.0 or MIT license.](https://img.shields.io/badge/license-Apache--2.0_OR_MIT-blue.svg)](#license)
-[![Build status](https://github.com/linebender/tabulon/workflows/CI/badge.svg)](https://github.com/linebender/tabulon/actions)
+[![Build status](https://github.com/endoli/tabulon/workflows/CI/badge.svg)](https://github.com/endoli/tabulon/actions)
 [![Crates.io](https://img.shields.io/crates/v/tabulon.svg)](https://crates.io/crates/tabulon)
 [![Docs](https://docs.rs/tabulon/badge.svg)](https://docs.rs/tabulon)
 
