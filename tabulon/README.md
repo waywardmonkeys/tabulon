@@ -57,7 +57,7 @@ cargo update -p package_name --precise 0.1.1
 
 ## Community
 
-[![Linebender Zulip](https://img.shields.io/badge/Xi%20Zulip-%23general-blue?logo=Zulip)](https://xi.zulipchat.com/#narrow/channel/147921-general)
+[![Linebender Zulip](https://img.shields.io/badge/Linebender%20Zulip-%23general-blue?logo=Zulip)](https://xi.zulipchat.com/#narrow/channel/147921-general)
 
 Discussion of Tabulon development happens in the [Linebender Zulip](https://xi.zulipchat.com/), specifically the [#general channel](https://xi.zulipchat.com/#narrow/channel/147921-general).
 All public content can be read without logging in.
