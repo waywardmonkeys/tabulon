@@ -345,7 +345,6 @@ impl ApplicationHandler for TabulonDxfViewer<'_> {
                                 pointer: PointerInfo { pointer_id, .. },
                                 ..
                             }
-                            | PointerEvent::Leave(PointerInfo { pointer_id, .. })
                             | PointerEvent::Cancel(PointerInfo { pointer_id, .. }) => {
                                 if viewer.gestures.pan == pointer_id {
                                     viewer.gestures.pan = None;
