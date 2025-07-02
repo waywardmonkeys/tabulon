@@ -3,6 +3,7 @@
 
 //! DXF loader for Tabulon
 
+pub use dxf;
 use dxf::{Drawing, DxfResult, entities::EntityType};
 
 use tabulon::{
