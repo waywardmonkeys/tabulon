@@ -911,8 +911,12 @@ pub fn load_file_default_layers(path: impl AsRef<Path>) -> DxfResult<TDDrawing> 
                         layer.line_weight.raw_value() as u64 * 10 * MICROMETER
                     }
                 }
-                // BYBLOCK Should not occur at the entity level, use default.
-                -1 => LWDEFAULT,
+                // BYBLOCK (-1) Should not occur at the entity level, use default.
+                //
+                // Other negative values occur in the wild but have no standard
+                // meaning, as such all negative values not specifically handled
+                // above should have the default line width.
+                i if i < 0 => LWDEFAULT,
                 i => i as u64 * 10 * MICROMETER,
             };
 
